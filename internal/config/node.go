@@ -17,12 +17,19 @@ type NodeConfig struct {
 	// traffic. Defaults to 0.0.0.0.
 	BindAddr string `yaml:"bind_addr"`
 
-	// BindPort is the port the daemon listens on. Default 9001.
+	// BindPort is the port the daemon listens on. Default 9901.
 	BindPort int `yaml:"bind_port"`
 
 	// Advertise is the address other nodes use to reach us. May differ
 	// from BindAddr when behind NAT. Set explicitly via `qu init --advertise`.
 	Advertise string `yaml:"advertise"`
+
+	// ClusterSecret is the pre-shared secret every node in the cluster
+	// must present during the Join RPC. Without it any operator who
+	// can reach :9901 could enrol themselves into the cluster, so we
+	// require an out-of-band copy at `qu init` time. Stored locally
+	// only, never replicated.
+	ClusterSecret string `yaml:"cluster_secret"`
 }
 
 // AdvertiseAddr returns the address peers should dial. Falls back to
@@ -49,7 +56,7 @@ func LoadNodeConfig() (*NodeConfig, error) {
 		return nil, fmt.Errorf("parse node.yaml: %w", err)
 	}
 	if cfg.BindPort == 0 {
-		cfg.BindPort = 9001
+		cfg.BindPort = 9901
 	}
 	if cfg.BindAddr == "" {
 		cfg.BindAddr = "0.0.0.0"

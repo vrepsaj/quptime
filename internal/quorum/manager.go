@@ -43,9 +43,10 @@ type VersionObserver func(peerID, peerAddr string, peerVersion uint64)
 
 // Manager coordinates heartbeats and master election for one node.
 type Manager struct {
-	selfID  string
-	cluster *config.ClusterConfig
-	client  *transport.Client
+	selfID        string
+	selfAdvertise string
+	cluster       *config.ClusterConfig
+	client        *transport.Client
 
 	heartbeatInterval time.Duration
 	deadAfter         time.Duration
@@ -72,6 +73,15 @@ func New(selfID string, cluster *config.ClusterConfig, client *transport.Client)
 		lastSeen:          map[string]time.Time{},
 		addrOf:            map[string]string{},
 	}
+}
+
+// SetSelfAdvertise records the address this node advertises to peers.
+// It's piggy-backed on every outbound heartbeat so the recipient can
+// reach us even before we appear in their cluster.yaml.
+func (m *Manager) SetSelfAdvertise(addr string) {
+	m.mu.Lock()
+	m.selfAdvertise = addr
+	m.mu.Unlock()
 }
 
 // SetVersionObserver registers a callback fired when a peer reports a
@@ -104,15 +114,24 @@ func (m *Manager) Start(ctx context.Context) {
 func (m *Manager) HandleHeartbeat(req transport.HeartbeatRequest) transport.HeartbeatResponse {
 	if req.FromNodeID != "" && req.FromNodeID != m.selfID {
 		m.markLive(req.FromNodeID)
+		if req.Advertise != "" {
+			m.mu.Lock()
+			m.addrOf[req.FromNodeID] = req.Advertise
+			m.mu.Unlock()
+		}
 		m.maybeNotifyVersion(req.FromNodeID, req.Version)
 	}
 	m.recomputeMaster()
-	v := m.cluster.Snapshot().Version
+	snap := m.cluster.Snapshot()
+	m.mu.RLock()
+	selfAdv := m.selfAdvertise
+	m.mu.RUnlock()
 	return transport.HeartbeatResponse{
-		NodeID:   m.selfID,
-		Term:     m.Term(),
-		MasterID: m.Master(),
-		Version:  v,
+		NodeID:    m.selfID,
+		Advertise: selfAdv,
+		Term:      m.Term(),
+		MasterID:  m.Master(),
+		Version:   snap.Version,
 	}
 }
 
@@ -183,6 +202,9 @@ func (m *Manager) tick(ctx context.Context) {
 	}
 
 	currentMaster := m.Master()
+	m.mu.RLock()
+	selfAdv := m.selfAdvertise
+	m.mu.RUnlock()
 	for _, p := range snap.Peers {
 		if p.NodeID == m.selfID || p.NodeID == "" || p.Advertise == "" {
 			continue
@@ -194,6 +216,7 @@ func (m *Manager) tick(ctx context.Context) {
 			defer cancel()
 			req := transport.HeartbeatRequest{
 				FromNodeID: m.selfID,
+				Advertise:  selfAdv,
 				Term:       m.Term(),
 				MasterID:   currentMaster,
 				Version:    snap.Version,
@@ -204,6 +227,11 @@ func (m *Manager) tick(ctx context.Context) {
 				return
 			}
 			m.markLive(peerID)
+			if resp.Advertise != "" {
+				m.mu.Lock()
+				m.addrOf[peerID] = resp.Advertise
+				m.mu.Unlock()
+			}
 			m.maybeNotifyVersion(peerID, resp.Version)
 		}(peerID, addr)
 	}
@@ -229,6 +257,13 @@ func (m *Manager) maybeNotifyVersion(peerID string, peerVer uint64) {
 	m.mu.RLock()
 	addr := m.addrOf[peerID]
 	m.mu.RUnlock()
+	// Without an address we can't pull — silently wait for a
+	// later heartbeat (or for the peer to land in cluster.yaml) to
+	// supply one. Firing the observer with addr == "" would just
+	// produce log spam from the replicator.
+	if addr == "" {
+		return
+	}
 	m.observer(peerID, addr, peerVer)
 }
 

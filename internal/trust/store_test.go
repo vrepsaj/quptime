@@ -18,10 +18,10 @@ func TestRoundtripAndLookup(t *testing.T) {
 		t.Error("expected empty store")
 	}
 
-	if err := s.Add(Entry{NodeID: "n1", Address: "10.0.0.1:9001", Fingerprint: "sha256:abc"}); err != nil {
+	if err := s.Add(Entry{NodeID: "n1", Address: "10.0.0.1:9901", Fingerprint: "sha256:abc"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Add(Entry{NodeID: "n2", Address: "10.0.0.2:9001", Fingerprint: "sha256:def"}); err != nil {
+	if err := s.Add(Entry{NodeID: "n2", Address: "10.0.0.2:9901", Fingerprint: "sha256:def"}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -16,12 +18,17 @@ func addInitCmd(root *cobra.Command) {
 	var advertise string
 	var bindAddr string
 	var bindPort int
+	var clusterSecret string
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Generate node identity, keys, and config",
 		Long: `Initialise a new qu node on this host: pick a UUID, generate an
 RSA keypair, write a default node.yaml, and prepare the trust store.
+
+Pass --secret on every subsequent node so they share the same
+cluster join secret. If --secret is omitted on the very first node, a
+random secret is generated and printed for the operator to copy.
 
 Idempotent in one direction only: existing key material is never
 overwritten. Re-run only after wiping the data directory.`,
@@ -32,12 +39,25 @@ overwritten. Re-run only after wiping the data directory.`,
 			if _, err := os.Stat(config.NodeFilePath()); err == nil {
 				return errors.New("node.yaml already exists in data dir — refusing to overwrite")
 			}
+
+			secret := clusterSecret
+			generated := false
+			if secret == "" {
+				s, err := generateSecret()
+				if err != nil {
+					return fmt.Errorf("generate cluster secret: %w", err)
+				}
+				secret = s
+				generated = true
+			}
+
 			nodeID := uuid.NewString()
 			n := &config.NodeConfig{
-				NodeID:    nodeID,
-				BindAddr:  bindAddr,
-				BindPort:  bindPort,
-				Advertise: advertise,
+				NodeID:        nodeID,
+				BindAddr:      bindAddr,
+				BindPort:      bindPort,
+				Advertise:     advertise,
+				ClusterSecret: secret,
 			}
 			if err := n.Save(); err != nil {
 				return fmt.Errorf("save node.yaml: %w", err)
@@ -66,20 +86,39 @@ overwritten. Re-run only after wiping the data directory.`,
 					NodeID:      nodeID,
 					Advertise:   n.AdvertiseAddr(),
 					Fingerprint: fp,
+					CertPEM:     string(certPEM),
 				}}
 				return nil
 			}); err != nil {
 				return fmt.Errorf("seed cluster.yaml: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "initialised node %s\n", nodeID)
-			fmt.Fprintf(cmd.OutOrStdout(), "data dir: %s\n", config.DataDir())
-			fmt.Fprintf(cmd.OutOrStdout(), "advertise: %s\n", n.AdvertiseAddr())
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "initialised node %s\n", nodeID)
+			fmt.Fprintf(out, "data dir: %s\n", config.DataDir())
+			fmt.Fprintf(out, "advertise: %s\n", n.AdvertiseAddr())
+			if generated {
+				fmt.Fprintln(out)
+				fmt.Fprintln(out, "cluster secret (copy to every other node via --secret):")
+				fmt.Fprintln(out, "  "+secret)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&advertise, "advertise", "", "address peers should use to reach this node (host:port)")
 	cmd.Flags().StringVar(&bindAddr, "bind", "0.0.0.0", "listen address for inter-node traffic")
-	cmd.Flags().IntVar(&bindPort, "port", 9001, "listen port for inter-node traffic")
+	cmd.Flags().IntVar(&bindPort, "port", 9901, "listen port for inter-node traffic")
+	cmd.Flags().StringVar(&clusterSecret, "secret", "", "shared cluster join secret (omit on the first node to auto-generate)")
 	root.AddCommand(cmd)
+}
+
+// generateSecret produces 32 bytes of crypto-random data and returns
+// it base64-encoded. Long enough that brute force isn't a concern;
+// short enough that operators can copy-paste it without pagination.
+func generateSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

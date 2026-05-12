@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"time"
 
@@ -38,6 +39,13 @@ func (d *Daemon) registerHandlers() {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return transport.JoinResponse{Error: err.Error()}, nil
 		}
+		// Constant-time secret check: every node in the cluster must
+		// present the same shared secret. This is the only barrier
+		// stopping a stranger who can reach :9901 from enrolling
+		// themselves with their own fresh key.
+		if subtle.ConstantTimeCompare([]byte(req.ClusterSecret), []byte(d.node.ClusterSecret)) != 1 {
+			return transport.JoinResponse{Error: "cluster secret mismatch"}, nil
+		}
 		fp, err := crypto.FingerprintFromCertPEM([]byte(req.CertPEM))
 		if err != nil {
 			return transport.JoinResponse{Error: "parse cert: " + err.Error()}, nil
@@ -45,11 +53,6 @@ func (d *Daemon) registerHandlers() {
 		if fp != req.Fingerprint {
 			return transport.JoinResponse{Error: "fingerprint mismatch"}, nil
 		}
-		// Outbound join (the proposing node already accepted our cert
-		// out of band). Symmetric trust is required for mTLS to work,
-		// so we accept the join automatically. Operators who need
-		// stricter onboarding can disable the listener and use the
-		// CLI flow exclusively.
 		if err := d.trust.Add(trust.Entry{
 			NodeID:      req.NodeID,
 			Address:     req.Advertise,

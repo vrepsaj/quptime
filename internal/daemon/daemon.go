@@ -103,6 +103,7 @@ func New(logger *log.Logger) (*Daemon, error) {
 	}
 
 	d.quorum = quorum.New(node.NodeID, cluster, client)
+	d.quorum.SetSelfAdvertise(node.AdvertiseAddr())
 	d.replicator = replicate.New(node.NodeID, cluster, client, d.quorum)
 	d.aggregator = checks.NewAggregator(cluster, nil)
 	d.dispatcher = alerts.New(cluster, node.NodeID, logger)
@@ -125,7 +126,40 @@ func New(logger *log.Logger) (*Daemon, error) {
 	d.scheduler = checks.NewScheduler(cluster, &sink{d: d})
 	d.control = newControlServer(d)
 	d.registerHandlers()
+
+	// Whenever cluster.yaml changes, mirror peer certs into the local
+	// trust store so this node can mTLS to every other peer — even
+	// peers it was never invited by directly.
+	cluster.OnChange(d.syncTrustFromCluster)
+	d.syncTrustFromCluster()
+
 	return d, nil
+}
+
+// syncTrustFromCluster makes sure every peer listed in cluster.yaml
+// has a corresponding trust entry. Trust entries are only added (not
+// removed) here — `qu node remove` is the explicit eviction path.
+func (d *Daemon) syncTrustFromCluster() {
+	snap := d.cluster.Snapshot()
+	for _, p := range snap.Peers {
+		if p.NodeID == "" || p.NodeID == d.node.NodeID {
+			continue
+		}
+		if p.Fingerprint == "" || p.CertPEM == "" {
+			continue // pre-1.0 peer entry without cert material — skip
+		}
+		if existing, ok := d.trust.Get(p.NodeID); ok && existing.Fingerprint == p.Fingerprint {
+			continue
+		}
+		if err := d.trust.Add(trust.Entry{
+			NodeID:      p.NodeID,
+			Address:     p.Advertise,
+			Fingerprint: p.Fingerprint,
+			CertPEM:     p.CertPEM,
+		}); err != nil {
+			d.logger.Printf("trust sync: %s: %v", p.NodeID, err)
+		}
+	}
 }
 
 // Run binds the inter-node listener and the local control socket,

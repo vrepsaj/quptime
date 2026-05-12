@@ -305,10 +305,11 @@ func (d *Daemon) nodeAdd(ctx context.Context, body NodeAddBody) (NodeAddResult, 
 		return NodeAddResult{}, fmt.Errorf("own fingerprint: %w", err)
 	}
 	joinReq := transport.JoinRequest{
-		NodeID:      d.node.NodeID,
-		Advertise:   d.node.AdvertiseAddr(),
-		Fingerprint: myFP,
-		CertPEM:     string(d.assets.Cert),
+		NodeID:        d.node.NodeID,
+		Advertise:     d.node.AdvertiseAddr(),
+		Fingerprint:   myFP,
+		CertPEM:       string(d.assets.Cert),
+		ClusterSecret: d.node.ClusterSecret,
 	}
 	var joinResp transport.JoinResponse
 	if err := d.client.Call(ctx, peerID, body.Address, transport.MethodJoin, joinReq, &joinResp); err != nil {
@@ -319,11 +320,14 @@ func (d *Daemon) nodeAdd(ctx context.Context, body NodeAddBody) (NodeAddResult, 
 	}
 
 	// Propose the cluster-config addition. Routed to master via the
-	// replicator; if we are the master, applied directly.
+	// replicator; if we are the master, applied directly. Including
+	// CertPEM lets other peers auto-trust this node once the new
+	// cluster.yaml reaches them.
 	peerInfo := config.PeerInfo{
 		NodeID:      peerID,
 		Advertise:   body.Address,
 		Fingerprint: sample.Fingerprint,
+		CertPEM:     string(sample.CertPEM),
 	}
 	ver, err := d.replicator.LocalMutate(ctx, transport.MutationAddPeer, peerInfo)
 	if err != nil {

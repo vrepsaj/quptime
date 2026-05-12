@@ -47,15 +47,20 @@ func runStatusPrint(ctx context.Context, cmd *cobra.Command, peersOnly bool) err
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "PEERS")
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE_ID\tADVERTISE\tLIVE\tLAST_SEEN")
+	fmt.Fprintln(tw, "\tNODE_ID\tADVERTISE\tLIVE\tLAST_SEEN")
 	for _, p := range st.Peers {
 		lastSeen := "-"
 		if !p.LastSeen.IsZero() {
 			lastSeen = p.LastSeen.Format(time.RFC3339)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%v\t%s\n", p.NodeID, p.Advertise, p.Live, lastSeen)
+		marker := " "
+		if p.NodeID == st.NodeID {
+			marker = "*"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%s\n", marker, p.NodeID, p.Advertise, p.Live, lastSeen)
 	}
 	tw.Flush()
+	fmt.Fprintln(out, "(* = this node)")
 
 	if peersOnly {
 		return nil

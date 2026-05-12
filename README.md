@@ -22,7 +22,7 @@ on truth. If one of them loses its uplink, the rest keep alerting.
 ```
    +-------------- node A ---------------+
    | qu serve                            |
-   | ├─ transport server (mTLS :9001)    |
+   | ├─ transport server (mTLS :9901)    |
    | ├─ quorum manager  (heartbeats)     |
    | ├─ replicator      (cluster.yaml)   |
    | ├─ scheduler       (HTTP/TCP/ICMP)  |  <─── probes targets
@@ -73,23 +73,46 @@ git push --tags
 
 ## Set up a 3-node cluster
 
-On each host:
+On the **first host**:
 
 ```sh
-# 1. Generate identity + RSA-3072 keypair + self-signed cert.
-qu init --advertise <this-host's reachable address>:9001
+qu init --advertise alpha.example.com:9901
+```
 
-# 2. Start the daemon (foreground; wire it into systemd for prod).
+That prints a random cluster secret. Copy it.
+
+On every **other host**, pass that secret via `--secret`:
+
+```sh
+qu init --advertise bravo.example.com:9901  --secret <paste>
+qu init --advertise charlie.example.com:9901 --secret <paste>
+```
+
+Without the matching secret a node cannot join, so random hosts that
+can reach :9901 are safely ignored.
+
+Start the daemon on every host (foreground; wire into systemd for prod):
+
+```sh
 qu serve
 ```
 
-Pick one node and tell it about the other two. The CLI prints the
-remote fingerprint and asks for confirmation, SSH-style:
+Then on one node — usually `alpha` — invite the others. The CLI prints
+each remote's fingerprint and asks for confirmation SSH-style:
 
 ```sh
-qu node add  bravo.example.com:9001
-qu node add  charlie.example.com:9001
+qu node add bravo.example.com:9901
+qu node add charlie.example.com:9901
 ```
+
+After the first invite, give it a few seconds for heartbeats to bring
+the new peer into the live set before inviting the next one — otherwise
+the local node's "needs ≥2 live to mutate" check will reject the
+second add.
+
+You only need to invite from one node. Peer certs ride along with the
+replicated `cluster.yaml`, so every peer auto-trusts every other peer
+without `N×(N-1)` invites.
 
 That's it — the master broadcasts the new cluster config to every
 trusting peer. `qu status` from any node should now show all three:
@@ -103,9 +126,9 @@ config ver 4
 
 PEERS
 NODE_ID  ADVERTISE                 LIVE  LAST_SEEN
-a7f3...  alpha.example.com:9001    true  2026-05-12T15:01:32Z
-b21c...  bravo.example.com:9001    true  2026-05-12T15:01:32Z
-c0d4...  charlie.example.com:9001  true  2026-05-12T15:01:32Z
+a7f3...  alpha.example.com:9901    true  2026-05-12T15:01:32Z
+b21c...  bravo.example.com:9901    true  2026-05-12T15:01:32Z
+c0d4...  charlie.example.com:9901  true  2026-05-12T15:01:32Z
 ```
 
 ## Adding checks and alerts

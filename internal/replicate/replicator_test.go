@@ -88,7 +88,7 @@ func TestApplyAddAndRemoveAlertAndPeer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	peer, _ := json.Marshal(config.PeerInfo{NodeID: "p1", Advertise: "10.0.0.1:9001", Fingerprint: "fp"})
+	peer, _ := json.Marshal(config.PeerInfo{NodeID: "p1", Advertise: "10.0.0.1:9901", Fingerprint: "fp"})
 	if _, err := r.LocalMutate(context.Background(), transport.MutationAddPeer, json.RawMessage(peer)); err != nil {
 		t.Fatal(err)
 	}

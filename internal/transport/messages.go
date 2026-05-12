@@ -61,11 +61,16 @@ type WhoAmIResponse struct {
 // JoinRequest is sent by a node that has just learned the remote's
 // fingerprint out of band and wants the remote to record this node in
 // its own trust store too (so the relationship is symmetric).
+//
+// ClusterSecret is the pre-shared cluster join key. The recipient
+// rejects the request unless it matches the locally-configured secret
+// in constant time.
 type JoinRequest struct {
-	NodeID      string `json:"node_id"`
-	Advertise   string `json:"advertise"`
-	Fingerprint string `json:"fingerprint"`
-	CertPEM     string `json:"cert_pem"`
+	NodeID        string `json:"node_id"`
+	Advertise     string `json:"advertise"`
+	Fingerprint   string `json:"fingerprint"`
+	CertPEM       string `json:"cert_pem"`
+	ClusterSecret string `json:"cluster_secret"`
 }
 
 // JoinResponse echoes a non-empty Error string when the remote refuses
@@ -77,9 +82,12 @@ type JoinResponse struct {
 
 // HeartbeatRequest is the periodic liveness ping sent over the
 // inter-node channel. It also carries the sender's view of who the
-// master is, so disagreements surface quickly.
+// master is, so disagreements surface quickly. Advertise lets the
+// recipient cache where to reach the sender, which matters when the
+// sender isn't yet in our cluster.yaml peers list (e.g. mid-bootstrap).
 type HeartbeatRequest struct {
 	FromNodeID string `json:"from_node_id"`
+	Advertise  string `json:"advertise"`
 	Term       uint64 `json:"term"`
 	MasterID   string `json:"master_id"`
 	Version    uint64 `json:"config_version"`
@@ -87,10 +95,11 @@ type HeartbeatRequest struct {
 
 // HeartbeatResponse is returned by MethodHeartbeat.
 type HeartbeatResponse struct {
-	NodeID   string `json:"node_id"`
-	Term     uint64 `json:"term"`
-	MasterID string `json:"master_id"`
-	Version  uint64 `json:"config_version"`
+	NodeID    string `json:"node_id"`
+	Advertise string `json:"advertise"`
+	Term      uint64 `json:"term"`
+	MasterID  string `json:"master_id"`
+	Version   uint64 `json:"config_version"`
 }
 
 // GetClusterCfgRequest fetches the responder's view of cluster.yaml.

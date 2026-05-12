@@ -10,11 +10,18 @@ import (
 )
 
 // PeerInfo identifies a cluster member as known to all peers.
-// (Trust material lives in trust.yaml; this struct stays portable.)
+//
+// CertPEM rides along so the daemon can populate trust.yaml when a
+// new node joins: a follower receiving an updated cluster.yaml from
+// the master trusts the master, and therefore trusts the peer
+// certificates it forwards. Without this, mTLS between new and old
+// peers would never succeed because neither would have the other in
+// its trust store.
 type PeerInfo struct {
 	NodeID      string `yaml:"node_id"`
 	Advertise   string `yaml:"advertise"`
 	Fingerprint string `yaml:"fingerprint"`
+	CertPEM     string `yaml:"cert_pem,omitempty"`
 }
 
 // CheckType enumerates the supported probe kinds.
@@ -83,7 +90,27 @@ type ClusterConfig struct {
 	Checks []Check    `yaml:"checks"`
 	Alerts []Alert    `yaml:"alerts"`
 
-	mu sync.RWMutex `yaml:"-"`
+	mu       sync.RWMutex `yaml:"-"`
+	onChange []func()     // fired after any successful Mutate/Replace
+}
+
+// OnChange registers a callback fired after every successful Mutate
+// or Replace. Callbacks run synchronously on the mutating goroutine
+// AFTER the lock is released — they may safely call back into the
+// config to read snapshots.
+func (c *ClusterConfig) OnChange(fn func()) {
+	c.mu.Lock()
+	c.onChange = append(c.onChange, fn)
+	c.mu.Unlock()
+}
+
+func (c *ClusterConfig) fireOnChange() {
+	c.mu.RLock()
+	cbs := append([]func(){}, c.onChange...)
+	c.mu.RUnlock()
+	for _, fn := range cbs {
+		fn()
+	}
 }
 
 // LoadClusterConfig reads cluster.yaml. A missing file returns an
@@ -136,8 +163,8 @@ func (c *ClusterConfig) Snapshot() *ClusterConfig {
 // success, and writes the file. Only the master should call this.
 func (c *ClusterConfig) Mutate(byNode string, fn func(*ClusterConfig) error) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if err := fn(c); err != nil {
+		c.mu.Unlock()
 		return err
 	}
 	c.Version++
@@ -145,9 +172,16 @@ func (c *ClusterConfig) Mutate(byNode string, fn func(*ClusterConfig) error) err
 	c.UpdatedBy = byNode
 	out, err := yaml.Marshal(c)
 	if err != nil {
+		c.mu.Unlock()
 		return err
 	}
-	return AtomicWrite(ClusterFilePath(), out, 0o600)
+	if err := AtomicWrite(ClusterFilePath(), out, 0o600); err != nil {
+		c.mu.Unlock()
+		return err
+	}
+	c.mu.Unlock()
+	c.fireOnChange()
+	return nil
 }
 
 // Replace overwrites the local config with an incoming snapshot if
@@ -155,8 +189,8 @@ func (c *ClusterConfig) Mutate(byNode string, fn func(*ClusterConfig) error) err
 // applied.
 func (c *ClusterConfig) Replace(incoming *ClusterConfig) (bool, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if incoming.Version <= c.Version {
+		c.mu.Unlock()
 		return false, nil
 	}
 	c.Version = incoming.Version
@@ -167,11 +201,15 @@ func (c *ClusterConfig) Replace(incoming *ClusterConfig) (bool, error) {
 	c.Alerts = append([]Alert(nil), incoming.Alerts...)
 	out, err := yaml.Marshal(c)
 	if err != nil {
+		c.mu.Unlock()
 		return false, err
 	}
 	if err := AtomicWrite(ClusterFilePath(), out, 0o600); err != nil {
+		c.mu.Unlock()
 		return false, err
 	}
+	c.mu.Unlock()
+	c.fireOnChange()
 	return true, nil
 }
 

@@ -134,6 +134,12 @@ func TestVersionObserverFiresOnHigherVersion(t *testing.T) {
 		notified.count++
 	})
 
+	// Seed the address for "b" via an incoming heartbeat — the
+	// observer no-ops without one to avoid log spam.
+	m.HandleHeartbeat(transport.HeartbeatRequest{
+		FromNodeID: "b", Advertise: "10.0.0.2:9901", Version: 2,
+	})
+
 	m.maybeNotifyVersion("b", 5)
 	if notified.count != 1 || notified.peerID != "b" || notified.peerVer != 5 {
 		t.Errorf("expected observer fired with b=5, got %+v", notified)
@@ -142,5 +148,19 @@ func TestVersionObserverFiresOnHigherVersion(t *testing.T) {
 	m.maybeNotifyVersion("b", 1)
 	if notified.count != 1 {
 		t.Errorf("observer fired for stale version, count=%d", notified.count)
+	}
+}
+
+func TestVersionObserverSkippedWithoutAddress(t *testing.T) {
+	cluster := &config.ClusterConfig{Version: 0}
+	m := New("a", cluster, nil)
+
+	var fired int
+	m.SetVersionObserver(func(_, _ string, _ uint64) { fired++ })
+
+	// Peer "c" has never sent a heartbeat — no recorded address.
+	m.maybeNotifyVersion("c", 99)
+	if fired != 0 {
+		t.Errorf("observer fired without a known address: %d", fired)
 	}
 }
