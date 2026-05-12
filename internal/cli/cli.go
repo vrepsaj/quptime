@@ -8,11 +8,13 @@ package cli
 
 import "github.com/spf13/cobra"
 
-// NewRootCommand returns the full cobra tree.
-func NewRootCommand() *cobra.Command {
+// NewRootCommand returns the full cobra tree. version is the build
+// stamp surfaced via `qu --version`; pass "dev" when unset.
+func NewRootCommand(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "qu",
 		Short:         "Quorum-based uptime monitor",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

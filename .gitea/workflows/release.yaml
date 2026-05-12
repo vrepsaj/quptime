@@ -1,0 +1,58 @@
+name: Release
+
+# Fires when a version tag is pushed (e.g. `git tag v0.1.0 && git push --tags`).
+# Runs the test suite as a release gate, builds static Linux binaries
+# for amd64 + arm64, and attaches them to a Gitea release named after
+# the tag.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          check-latest: true
+          cache: true
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            out="dist/qu-${VERSION}-linux-${arch}"
+            echo "building ${out}"
+            GOOS=linux GOARCH="${arch}" \
+              go build \
+                -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "${out}" \
+                ./cmd/qu
+          done
+          (cd dist && sha256sum qu-* > SHA256SUMS)
+          ls -lh dist
+
+      - name: Publish release
+        uses: https://gitea.com/actions/release-action@main
+        with:
+          files: |-
+            dist/qu-*
+            dist/SHA256SUMS
+          api_key: '${{ secrets.GITHUB_TOKEN }}'

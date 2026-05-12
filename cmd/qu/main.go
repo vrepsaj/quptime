@@ -13,8 +13,12 @@ import (
 	"git.cer.sh/axodouble/quptime/internal/cli"
 )
 
+// version is stamped at link time via `-ldflags "-X main.version=..."`.
+// Falls back to "dev" for unreleased builds.
+var version = "dev"
+
 func main() {
-	if err := cli.NewRootCommand().Execute(); err != nil {
+	if err := cli.NewRootCommand(version).Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}

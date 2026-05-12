@@ -52,6 +52,25 @@ Requires Go 1.23 or newer.
 go build -o qu ./cmd/qu
 ```
 
+To stamp the version into the binary:
+
+```sh
+go build -ldflags "-X main.version=v0.1.0" -o qu ./cmd/qu
+qu --version
+```
+
+## Releases
+
+Pushing a tag matching `v*` triggers `.gitea/workflows/release.yaml`,
+which runs the test suite, cross-compiles static Linux binaries for
+amd64 and arm64, and publishes them as a Gitea release with a
+`SHA256SUMS` file alongside.
+
+```sh
+git tag v0.1.0
+git push --tags
+```
+
 ## Set up a 3-node cluster
 
 On each host:
