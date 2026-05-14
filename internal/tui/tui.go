@@ -328,25 +328,17 @@ func (m model) renderHeader() string {
 	return headerStyle.Width(outerW).Render(rows)
 }
 
-// headerHeight is the number of terminal rows renderHeader will produce,
-// including the rounded border. Used to compute the body area in resizeTabs.
+// headerHeight returns the actual number of terminal rows renderHeader
+// produces, including the rounded border. Used to compute the body area in
+// resizeTabs. We measure the rendered output rather than guess because the
+// header's content can line-wrap on very narrow terminals (e.g. the left
+// half being wider than the inner content area), which a width-based
+// heuristic can't see.
 func (m model) headerHeight() int {
-	// border(2) + content lines. The status-not-loaded variant is always 1
-	// content line; once loaded we stack when content doesn't fit.
-	contentLines := 1
-	if m.statusLoaded && m.width > 0 {
-		innerW := m.width - 4
-		if innerW < 1 {
-			innerW = 1
-		}
-		// Worst-case content widths roughly track these constants, so use
-		// a heuristic threshold instead of re-rendering: title+node+master+
-		// role is ~60 chars, quorum+term/ver is ~30 chars, plus the gap.
-		if 60+30+1 > innerW {
-			contentLines = 2
-		}
+	if m.width == 0 {
+		return 3
 	}
-	return contentLines + 2
+	return lipgloss.Height(m.renderHeader())
 }
 
 func (m model) renderTabs() string {
@@ -381,6 +373,16 @@ func (m model) renderActiveTab() string {
 	case tabAlerts:
 		view = m.alertsT.View()
 	}
+	// Table columns can sum to more than the terminal width on narrow
+	// terminals. Without this, bodyStyle.Width(...) would wrap each over-wide
+	// row onto extra lines and push the page taller than m.height, clipping
+	// the top of the TUI. Truncate per line so the bordered box stays the
+	// exact bodyH rows we sized for.
+	innerW := m.width - 4
+	if innerW < 1 {
+		innerW = 1
+	}
+	view = lipgloss.NewStyle().MaxWidth(innerW).Render(view)
 	return bodyStyle.Width(m.width - 2).Render(view)
 }
 
