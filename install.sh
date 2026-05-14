@@ -25,6 +25,24 @@ if [ -w "/usr/local/bin" ]; then
         echo_cmd "curl -L -o \"/usr/local/bin/qu\" \"https://git.cer.sh/axodouble/quptime/releases/download/${RELEASE}/qu-${RELEASE}-linux-amd64\""
         echo_cmd "chmod +x \"/usr/local/bin/qu\""
         echo "> qu has been installed to /usr/local/bin/qu"
+
+        # Drop completions into the directories each shell already scans.
+        # No rc-file edits, and uninstall is just `rm`. Silently skips
+        # shells whose completion dir is absent.
+        write_completion() {
+            local shell=$1 path=$2
+            [ -d "$(dirname "$path")" ] || return 1
+            if /usr/local/bin/qu completion "$shell" > "$path" 2>/dev/null; then
+                echo "> installed $shell completion -> $path"
+                return 0
+            fi
+            rm -f "$path"
+            return 1
+        }
+        write_completion bash /usr/share/bash-completion/completions/qu \
+            || write_completion bash /etc/bash_completion.d/qu
+        write_completion zsh  /usr/share/zsh/site-functions/_qu
+        write_completion fish /usr/share/fish/vendor_completions.d/qu.fish
     else
         echo "Error: curl is not installed. Please install curl and try again."
         exit 1
