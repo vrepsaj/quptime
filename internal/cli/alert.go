@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"text/tabwriter"
 	"time"
 
@@ -14,6 +15,41 @@ import (
 	"git.cer.sh/axodouble/quptime/internal/daemon"
 	"git.cer.sh/axodouble/quptime/internal/transport"
 )
+
+// bindTemplateFlags attaches --subject / --subject-file / --body /
+// --body-file to a cobra command. resolveTemplateFlags reads the file
+// variants (if non-empty) and returns the effective subject + body
+// template strings. Inline flags take precedence over file flags.
+func bindTemplateFlags(cmd *cobra.Command) {
+	cmd.Flags().String("subject", "", "subject template (text/template syntax — SMTP only)")
+	cmd.Flags().String("subject-file", "", "path to a file containing the subject template")
+	cmd.Flags().String("body", "", "body template (text/template syntax)")
+	cmd.Flags().String("body-file", "", "path to a file containing the body template")
+}
+
+func resolveTemplateFlags(cmd *cobra.Command) (subject, body string, err error) {
+	subject, _ = cmd.Flags().GetString("subject")
+	body, _ = cmd.Flags().GetString("body")
+	if subject == "" {
+		if p, _ := cmd.Flags().GetString("subject-file"); p != "" {
+			raw, e := os.ReadFile(p)
+			if e != nil {
+				return "", "", fmt.Errorf("read --subject-file %s: %w", p, e)
+			}
+			subject = string(raw)
+		}
+	}
+	if body == "" {
+		if p, _ := cmd.Flags().GetString("body-file"); p != "" {
+			raw, e := os.ReadFile(p)
+			if e != nil {
+				return "", "", fmt.Errorf("read --body-file %s: %w", p, e)
+			}
+			body = string(raw)
+		}
+	}
+	return subject, body, nil
+}
 
 func addAlertCmd(root *cobra.Command) {
 	alert := &cobra.Command{
@@ -136,22 +172,28 @@ func buildSMTPAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
+			subj, body, err := resolveTemplateFlags(cmd)
+			if err != nil {
+				return err
+			}
 			a := config.Alert{
-				ID:           uuid.NewString(),
-				Name:         args[0],
-				Type:         config.AlertSMTP,
-				Default:      makeDefault,
-				SMTPHost:     host,
-				SMTPPort:     port,
-				SMTPUser:     user,
-				SMTPPassword: password,
-				SMTPFrom:     from,
-				SMTPTo:       to,
-				SMTPStartTLS: startTLS,
+				ID:              uuid.NewString(),
+				Name:            args[0],
+				Type:            config.AlertSMTP,
+				Default:         makeDefault,
+				SubjectTemplate: subj,
+				BodyTemplate:    body,
+				SMTPHost:        host,
+				SMTPPort:        port,
+				SMTPUser:        user,
+				SMTPPassword:    password,
+				SMTPFrom:        from,
+				SMTPTo:          to,
+				SMTPStartTLS:    startTLS,
 			}
 			payload, _ := json.Marshal(a)
-			body := daemon.MutateBody{Kind: transport.MutationAddAlert, Payload: payload}
-			raw, err := callDaemon(ctx, daemon.CtrlMutate, body)
+			mb := daemon.MutateBody{Kind: transport.MutationAddAlert, Payload: payload}
+			raw, err := callDaemon(ctx, daemon.CtrlMutate, mb)
 			if err != nil {
 				return err
 			}
@@ -170,6 +212,7 @@ func buildSMTPAddCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&to, "to", nil, "recipient address (repeat or comma-separate)")
 	cmd.Flags().BoolVar(&startTLS, "starttls", true, "negotiate STARTTLS")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "attach this alert to every check automatically")
+	bindTemplateFlags(cmd)
 	_ = cmd.MarkFlagRequired("host")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("to")
@@ -186,16 +229,22 @@ func buildDiscordAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
+			subj, body, err := resolveTemplateFlags(cmd)
+			if err != nil {
+				return err
+			}
 			a := config.Alert{
-				ID:             uuid.NewString(),
-				Name:           args[0],
-				Type:           config.AlertDiscord,
-				Default:        makeDefault,
-				DiscordWebhook: webhook,
+				ID:              uuid.NewString(),
+				Name:            args[0],
+				Type:            config.AlertDiscord,
+				Default:         makeDefault,
+				SubjectTemplate: subj,
+				BodyTemplate:    body,
+				DiscordWebhook:  webhook,
 			}
 			payload, _ := json.Marshal(a)
-			body := daemon.MutateBody{Kind: transport.MutationAddAlert, Payload: payload}
-			raw, err := callDaemon(ctx, daemon.CtrlMutate, body)
+			mb := daemon.MutateBody{Kind: transport.MutationAddAlert, Payload: payload}
+			raw, err := callDaemon(ctx, daemon.CtrlMutate, mb)
 			if err != nil {
 				return err
 			}
@@ -208,6 +257,7 @@ func buildDiscordAddCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&webhook, "webhook", "", "discord webhook URL")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "attach this alert to every check automatically")
+	bindTemplateFlags(cmd)
 	_ = cmd.MarkFlagRequired("webhook")
 	return cmd
 }

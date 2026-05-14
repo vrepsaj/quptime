@@ -188,6 +188,48 @@ specific default by adding the alert's ID or name to its
 `suppress_alert_ids` list in `cluster.yaml` (see "Edit cluster.yaml
 directly" below).
 
+## Custom alert messages
+
+Each alert can carry its own `subject_template` and `body_template`
+(Go `text/template` syntax). When set, they override the built-in
+formatting for that one alert; the default renderer is used otherwise.
+Discord ignores the subject template (it has no subject line).
+
+```sh
+qu alert add discord oncall --webhook https://... \
+    --body ':rotating_light: **{{.Check.Name}}** is now {{.Verb}}
+target: `{{.Check.Target}}`
+detail: {{.Snapshot.Detail}}'
+
+# multi-line templates are easier from a file
+qu alert add smtp ops --host ... --from ... --to ... \
+    --subject-file /etc/quptime/templates/ops.subject \
+    --body-file    /etc/quptime/templates/ops.body
+```
+
+Available template variables:
+
+| Variable | Meaning |
+|---|---|
+| `{{.Check.Name}}` | check name |
+| `{{.Check.Type}}` | `http` / `tcp` / `icmp` |
+| `{{.Check.Target}}` | URL or host:port being probed |
+| `{{.Check.ID}}` | UUID |
+| `{{.From}}` | previous state (`up` / `down` / `unknown`) |
+| `{{.To}}` | new state |
+| `{{.Verb}}` | `UP` / `DOWN` / `RECOVERED` |
+| `{{.Snapshot.Reports}}` | total per-node reports counted |
+| `{{.Snapshot.OKCount}}` | how many reported OK |
+| `{{.Snapshot.NotOK}}` | how many reported failure |
+| `{{.Snapshot.Detail}}` | first failure detail string |
+| `{{.NodeID}}` | master that dispatched |
+| `{{.When}}` | RFC3339 timestamp |
+
+`qu alert test <name>` exercises the template against a synthetic
+"homepage going DOWN" transition, so you can verify rendering before
+production traffic depends on it. A template parse or execution error
+falls back to the built-in format and is logged.
+
 ## Edit cluster.yaml directly
 
 Anything you can do through the CLI you can also do by editing
@@ -258,8 +300,8 @@ qu check add tcp   <name> <host:port>
 qu check add icmp  <name> <host>
 qu check list
 qu check remove <id-or-name>
-qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default]
-qu alert add discord <name> --webhook …                                                        [--default]
+qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default] [--subject … --body …]
+qu alert add discord <name> --webhook …                                                        [--default] [--body …]
 qu alert list / remove / test <id-or-name>
 qu alert default <id-or-name> on|off            toggle default attachment to every check
 qu trust list / remove <node-id>

@@ -85,6 +85,16 @@ type Alert struct {
 
 	// Discord options.
 	DiscordWebhook string `yaml:"discord_webhook,omitempty"`
+
+	// SubjectTemplate / BodyTemplate are optional text/template strings
+	// that override the default rendering. Empty means use the built-in
+	// format. Discord ignores SubjectTemplate (it has no subject line);
+	// SMTP uses both. Available variables: {{.Check.Name}},
+	// {{.Check.Type}}, {{.Check.Target}}, {{.Check.ID}}, {{.From}},
+	// {{.To}}, {{.Verb}}, {{.Snapshot.Reports}}, {{.Snapshot.OKCount}},
+	// {{.Snapshot.NotOK}}, {{.Snapshot.Detail}}, {{.NodeID}}, {{.When}}.
+	SubjectTemplate string `yaml:"subject_template,omitempty"`
+	BodyTemplate    string `yaml:"body_template,omitempty"`
 }
 
 // ClusterConfig is the replicated cluster state. The Version field

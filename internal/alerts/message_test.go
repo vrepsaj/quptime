@@ -50,3 +50,61 @@ func TestRenderUpInitialTransition(t *testing.T) {
 		t.Error("first-time UP should not be tagged RECOVERED")
 	}
 }
+
+func TestRenderForUsesAlertTemplates(t *testing.T) {
+	check := &config.Check{Name: "homepage", Target: "https://example.com", Type: config.CheckHTTP}
+	snap := checks.Snapshot{Reports: 3, OKCount: 0, NotOK: 3, Detail: "connection refused"}
+	alert := &config.Alert{
+		SubjectTemplate: "{{.Check.Name}} is {{.Verb}}",
+		BodyTemplate:    "{{.Check.Target}} :: {{.Snapshot.Detail}}",
+	}
+	msg, err := RenderFor(alert, "master", check, checks.StateUp, checks.StateDown, snap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if msg.Subject != "homepage is DOWN" {
+		t.Errorf("subject = %q", msg.Subject)
+	}
+	if msg.Body != "https://example.com :: connection refused" {
+		t.Errorf("body = %q", msg.Body)
+	}
+}
+
+func TestRenderForFallsBackToDefaultPerField(t *testing.T) {
+	check := &config.Check{Name: "homepage", Target: "https://example.com", Type: config.CheckHTTP}
+	snap := checks.Snapshot{Reports: 3, OKCount: 0, NotOK: 3}
+	// only body overridden; subject should match default.
+	alert := &config.Alert{BodyTemplate: "custom body"}
+	msg, err := RenderFor(alert, "master", check, checks.StateUp, checks.StateDown, snap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(msg.Subject, "DOWN") {
+		t.Errorf("subject should be default rendering, got %q", msg.Subject)
+	}
+	if msg.Body != "custom body" {
+		t.Errorf("body = %q", msg.Body)
+	}
+}
+
+func TestRenderForReportsTemplateError(t *testing.T) {
+	check := &config.Check{Name: "homepage", Target: "https://example.com"}
+	snap := checks.Snapshot{}
+	alert := &config.Alert{BodyTemplate: "{{.Check.MissingField"} // unbalanced
+	_, err := RenderFor(alert, "master", check, checks.StateUp, checks.StateDown, snap)
+	if err == nil {
+		t.Fatal("expected parse error for malformed template")
+	}
+}
+
+func TestRenderForNilAlertReturnsDefault(t *testing.T) {
+	check := &config.Check{Name: "homepage", Target: "https://example.com"}
+	snap := checks.Snapshot{Reports: 1, OKCount: 1}
+	msg, err := RenderFor(nil, "master", check, checks.StateUp, checks.StateUp, snap)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(msg.Subject, "homepage") {
+		t.Errorf("default subject should mention check, got %q", msg.Subject)
+	}
+}
