@@ -58,14 +58,18 @@ var (
 	stateUnknownStyle = lipgloss.NewStyle().Foreground(colorMuted)
 )
 
+// renderState returns a plain-text state label for use inside the
+// bubbles table. The table truncates cells with runewidth.Truncate
+// which counts the printable bytes of ANSI escape sequences toward
+// column width, so a styled value gets chopped down to just "…".
 func renderState(s string) string {
 	switch s {
 	case "up":
-		return stateUpStyle.Render("● up")
+		return "● up"
 	case "down":
-		return stateDownStyle.Render("● down")
+		return "● down"
 	default:
-		return stateUnknownStyle.Render("○ unknown")
+		return "○ unknown"
 	}
 }
 
