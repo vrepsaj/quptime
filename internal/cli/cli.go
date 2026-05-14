@@ -25,5 +25,6 @@ func NewRootCommand(version string) *cobra.Command {
 	addAlertCmd(root)
 	addTrustCmd(root)
 	addStatusCmd(root)
+	addTUICmd(root)
 	return root
 }

@@ -188,6 +188,44 @@ specific default by adding the alert's ID or name to its
 `suppress_alert_ids` list in `cluster.yaml` (see "Edit cluster.yaml
 directly" below).
 
+## Interactive TUI
+
+Prefer a dashboard over typing commands? `qu tui` opens a full-screen
+[bubbletea](https://github.com/charmbracelet/bubbletea) UI over the
+local daemon socket. The header shows quorum, master, term, and config
+version; three tabs hold peers, checks, and alerts with auto-refresh
+every two seconds.
+
+```
+┌─ QUptime ── node: 88a00af9   master: 3438fd6f   (follower)  ● quorum 3/2  term 4   ver 10 ──┐
+│ Peers (3)   [2] Checks (3)   [3] Alerts (1)                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ID         NAME      STATE     OK/TOTAL  ALERTS    DETAIL                                    │
+│ ddbd...    homepage  ● up      3/3       oncall*                                             │
+│ 0006...    db        ● down    1/3       oncall*   dial timeout                              │
+│ 24f4...    gateway   ○ unknown 0/0       -                                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+↑↓ navigate   ⇥ next tab   1/2/3 jump   r refresh   a add check  d remove check   q quit
+```
+
+Keybindings:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | move cursor within a tab |
+| `Tab` / `Shift+Tab` | next / previous tab |
+| `1` / `2` / `3` | jump to Peers / Checks / Alerts |
+| `r` | force-refresh |
+| `a` | add (opens a picker on Checks/Alerts; node form on Peers) |
+| `d` | remove the selected row (confirmation prompt) |
+| `t` | send a test message to the selected alert |
+| `D` | toggle the selected alert's `default` flag |
+| `q` / `Ctrl+C` | quit |
+
+Forms run the same control-plane methods the CLI does, so any side
+effect (a mutation, a node add, an alert test) ends up routed through
+the master exactly like `qu …` from the shell.
+
 ## Custom alert messages
 
 Each alert can carry its own `subject_template` and `body_template`
@@ -292,6 +330,7 @@ sudo setcap cap_net_raw=+ep ./qu
 qu init                                       generate identity + keys
 qu serve                                      run the daemon
 qu status                                     quorum, master, check states
+qu tui                                        interactive dashboard
 qu node add    <host:port>                    TOFU-add a peer
 qu node list                                  show peers + liveness
 qu node remove <node-id>                      remove from cluster + trust
@@ -344,4 +383,5 @@ internal/checks/           HTTP/TCP/ICMP probers, scheduler, aggregator
 internal/alerts/           SMTP + Discord dispatchers, message rendering
 internal/daemon/           glue: wires every component + control socket
 internal/cli/              cobra commands, the user-facing surface
+internal/tui/              bubbletea dashboard (qu tui)
 ```
