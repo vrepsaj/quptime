@@ -6,6 +6,16 @@ echo_cmd() {
     eval "$1"
 }
 
+# Check if jq and curl are installed, if not, error out and ask the user to install them
+if ! command -v jq > /dev/null; then
+    echo "Error: jq is not installed. Please install jq and try again."
+    exit 1
+fi
+if ! command -v curl > /dev/null; then
+    echo "Error: curl is not installed. Please install curl and try again."
+    exit 1
+fi
+
 # Check if the user is allowed to write to /usr/local/bin, if so, install qu there, else error out and ask the user to install qu manually
 if [ -w "/usr/local/bin" ]; then
     # Download the latest release binary from the Git repository and save it to /usr/local/bin/qu
