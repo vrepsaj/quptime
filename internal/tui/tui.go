@@ -137,10 +137,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = msg.err.Error()
 		} else {
 			m.statusErr = ""
+			wasLoaded := m.statusLoaded
 			m.status = msg.st
 			m.statusLoaded = true
 			m.peers.Refresh(msg.st, msg.st.NodeID)
 			m.checks.Refresh(msg.st)
+			// First load may change header height on narrow terminals;
+			// re-run the layout so the body shrinks to compensate.
+			if !wasLoaded {
+				m.resizeTabs()
+			}
 		}
 		return m, nil
 
@@ -261,12 +267,22 @@ func (m model) View() string {
 }
 
 func (m model) renderHeader() string {
+	outerW := m.width - 2
+	if outerW < 20 {
+		outerW = 20
+	}
+	// headerStyle has Padding(0,1), so the usable content width is outerW-2.
+	innerW := outerW - 2
+	if innerW < 1 {
+		innerW = 1
+	}
+
 	if !m.statusLoaded {
 		msg := "connecting to daemon…"
 		if m.statusErr != "" {
 			msg = "daemon: " + m.statusErr
 		}
-		return headerStyle.Width(m.width - 2).Render(titleStyle.Render("QUptime") + "  " + helpStyle.Render(msg))
+		return headerStyle.Width(outerW).Render(titleStyle.Render("QUptime") + "  " + helpStyle.Render(msg))
 	}
 	st := m.status
 	quorum := stateDownStyle.Render("● no quorum")
@@ -297,16 +313,40 @@ func (m model) renderHeader() string {
 		"  ",
 		subtleStyle.Render(fmt.Sprintf("term %d   ver %d", st.Term, st.Version)),
 	)
-	width := m.width - 2
-	if width < 20 {
-		width = 20
+	leftW := lipgloss.Width(left)
+	rightW := lipgloss.Width(right)
+
+	// Single row when both halves fit with at least one space between them.
+	if leftW+rightW+1 <= innerW {
+		gap := innerW - leftW - rightW
+		row := left + strings.Repeat(" ", gap) + right
+		return headerStyle.Width(outerW).Render(row)
 	}
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+
+	// Otherwise stack vertically so nothing gets clipped on narrow terminals.
+	rows := lipgloss.JoinVertical(lipgloss.Left, left, right)
+	return headerStyle.Width(outerW).Render(rows)
+}
+
+// headerHeight is the number of terminal rows renderHeader will produce,
+// including the rounded border. Used to compute the body area in resizeTabs.
+func (m model) headerHeight() int {
+	// border(2) + content lines. The status-not-loaded variant is always 1
+	// content line; once loaded we stack when content doesn't fit.
+	contentLines := 1
+	if m.statusLoaded && m.width > 0 {
+		innerW := m.width - 4
+		if innerW < 1 {
+			innerW = 1
+		}
+		// Worst-case content widths roughly track these constants, so use
+		// a heuristic threshold instead of re-rendering: title+node+master+
+		// role is ~60 chars, quorum+term/ver is ~30 chars, plus the gap.
+		if 60+30+1 > innerW {
+			contentLines = 2
+		}
 	}
-	row := left + strings.Repeat(" ", gap) + right
-	return headerStyle.Width(width).Render(row)
+	return contentLines + 2
 }
 
 func (m model) renderTabs() string {
@@ -513,7 +553,10 @@ func (m *model) setFlash(s string, level flashLevel) {
 }
 
 func (m *model) resizeTabs() {
-	bodyH := m.height - 8
+	// Rows consumed outside the body: header (variable), tabs (1),
+	// body's own rounded border (2), flash (1), help (1).
+	reserved := m.headerHeight() + 5
+	bodyH := m.height - reserved
 	if bodyH < 5 {
 		bodyH = 5
 	}
