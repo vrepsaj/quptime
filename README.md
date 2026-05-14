@@ -44,6 +44,12 @@ Master election is deterministic: among the live members of the quorum,
 the node with the lexicographically smallest NodeID wins. No
 negotiation, no split-brain window.
 
+`cluster.yaml` is the single replicated source of truth (peers, checks,
+alerts). Mutations from the CLI route through the master, which bumps a
+monotonic version and broadcasts the result. The same file is also
+watched on disk, so an operator can `sudoedit cluster.yaml` on any node
+and the daemon will replicate the edit cluster-wide.
+
 ## Build
 
 Requires Go 1.23 or newer.
@@ -150,6 +156,61 @@ Mutations always route to the master, which bumps a monotonic version
 and pushes the new `cluster.yaml` to every peer. If quorum is lost,
 mutating commands fail loudly.
 
+`qu status` shows the effective alert list for each check. Default
+alerts are suffixed with `*` so you can tell at a glance which alerts
+were attached automatically vs explicitly listed on the check:
+
+```
+CHECKS
+ID        NAME      STATE  OK/TOTAL  ALERTS         DETAIL
+ddbd...   homepage  up     3/3       oncall,ops*    
+0006...   db        down   1/3       ops*           dial timeout
+24f4...   gateway   up     3/3       -              
+(alerts marked * are attached as defaults)
+```
+
+## Default alerts (attach to every check)
+
+Rather than listing the same `--alerts` on every `check add`, mark an
+alert as default and it fires for every check automatically:
+
+```sh
+# at creation
+qu alert add discord oncall --webhook https://... --default
+
+# or toggle later
+qu alert default oncall on
+qu alert default oncall off
+```
+
+`qu alert list` shows a DEFAULT column. A check can opt out of a
+specific default by adding the alert's ID or name to its
+`suppress_alert_ids` list in `cluster.yaml` (see "Edit cluster.yaml
+directly" below).
+
+## Edit cluster.yaml directly
+
+Anything you can do through the CLI you can also do by editing
+`$QUPTIME_DIR/cluster.yaml` on any node. The daemon polls the file every
+few seconds; when it sees a hash that differs from what it last wrote,
+it parses the YAML and forwards the change through the master, which
+bumps the version and broadcasts the result everywhere — so a hand-edit
+on `bravo` propagates to `alpha` and `charlie` automatically.
+
+```sh
+sudoedit /etc/quptime/cluster.yaml
+# add `default: true` to an alert, or `suppress_alert_ids: [oncall]`
+# on a check, then save and quit
+```
+
+You'll see a `manual-edit: cluster.yaml changed externally —
+replicating via master` line in the daemon log when it picks the change
+up. Invalid YAML is logged and ignored until you save a valid file.
+
+The replicated fields are `peers`, `checks`, and `alerts`. `version`,
+`updated_at`, and `updated_by` are server-controlled — the master
+overwrites them on commit.
+
 ## Test an alert without waiting for a real outage
 
 ```sh
@@ -197,9 +258,10 @@ qu check add tcp   <name> <host:port>
 qu check add icmp  <name> <host>
 qu check list
 qu check remove <id-or-name>
-qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls]
-qu alert add discord <name> --webhook …
+qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default]
+qu alert add discord <name> --webhook …                                                        [--default]
 qu alert list / remove / test <id-or-name>
+qu alert default <id-or-name> on|off            toggle default attachment to every check
 qu trust list / remove <node-id>
 ```
 
