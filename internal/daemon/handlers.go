@@ -113,6 +113,35 @@ func (d *Daemon) registerHandlers() {
 	})
 }
 
+// buildStatusForCLI is what the local control plane returns to `qu
+// status`. Peers, quorum, and term come from the local view; check
+// state is fetched from the master because the aggregator only runs
+// there. If the master is unknown or unreachable, falls back to the
+// local view (which will show "unknown" for every check).
+func (d *Daemon) buildStatusForCLI(ctx context.Context) transport.StatusResponse {
+	local := d.buildStatus()
+	if d.quorum.IsMaster() {
+		return local
+	}
+	masterID := d.quorum.Master()
+	if masterID == "" {
+		return local
+	}
+	addr := d.addressOf(masterID)
+	if addr == "" {
+		return local
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var remote transport.StatusResponse
+	if err := d.client.Call(callCtx, masterID, addr, transport.MethodStatus, transport.StatusRequest{}, &remote); err != nil {
+		d.logger.Printf("status: fetch from master %s: %v", masterID, err)
+		return local
+	}
+	local.Checks = remote.Checks
+	return local
+}
+
 // buildStatus is shared by both the inter-node Status RPC handler and
 // the local control plane's "status" command.
 func (d *Daemon) buildStatus() transport.StatusResponse {

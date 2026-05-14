@@ -189,7 +189,7 @@ func (c *controlServer) handleConn(ctx context.Context, conn net.Conn) {
 func (c *controlServer) dispatch(ctx context.Context, req CtrlRequest) CtrlResponse {
 	switch req.Method {
 	case CtrlStatus:
-		return ok(c.d.buildStatus())
+		return ok(c.d.buildStatusForCLI(ctx))
 
 	case CtrlMutate:
 		var body MutateBody
