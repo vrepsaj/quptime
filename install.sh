@@ -46,9 +46,9 @@ echo "> qu has been installed to $INSTALL_BIN"
 
 if "$INSTALL_BIN" --help 2>/dev/null | grep -q "completion"; then
     write_completion bash /usr/share/bash-completion/completions/qu \
-    || write_completion bash /etc/bash_completion.d/qu
-    write_completion zsh /usr/share/zsh/site-functions/_qu
-    write_completion fish /usr/share/fish/vendor_completions.d/qu.fish
+    || write_completion bash /etc/bash_completion.d/qu || true
+    write_completion zsh /usr/share/zsh/site-functions/_qu || true
+    write_completion fish /usr/share/fish/vendor_completions.d/qu.fish || true
 else
     echo "> qu does not expose completion support; skipping shell completion installation."
 fi
