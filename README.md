@@ -266,6 +266,7 @@ Available template variables:
 | `{{.From}}`             | previous state (`up` / `down` / `unknown`) |
 | `{{.To}}`               | new state                                  |
 | `{{.Verb}}`             | `UP` / `DOWN` / `RECOVERED`                |
+| `{{.VerbLower}}`        | lowercase form (`up` / `down` / `recovered`) |
 | `{{.Snapshot.Reports}}` | total per-node reports counted             |
 | `{{.Snapshot.OKCount}}` | how many reported OK                       |
 | `{{.Snapshot.NotOK}}`   | how many reported failure                  |
@@ -283,6 +284,81 @@ or Body template field in the add/edit alert forms.
 "homepage going DOWN" transition, so you can verify rendering before
 production traffic depends on it. A template parse or execution error
 falls back to the built-in format and is logged.
+
+### Conditionals, pipelines, and worked examples
+
+Templates use Go's `text/template` syntax, so you have `if`/`else if`/
+`else`/`end`, comparison helpers (`eq`, `ne`, `lt`, `gt`), `printf`
+pipelines, and `with` blocks. The default rendering — the one used
+when no custom template is set — lives in `internal/alerts/message.go`
+inside the `Render` function; tweak it there if you want to change
+what every alert without an override produces.
+
+A few progressively richer examples:
+
+**1. State-specific Discord copy** — different tone for `DOWN`,
+`RECOVERED`, and first-time `UP`:
+
+```yaml
+body_template: |
+  {{if eq .Verb "DOWN"}}:rotating_light: **{{.Check.Name}}** is DOWN
+  We're investigating. Last detail: `{{.Snapshot.Detail}}`
+  {{else if eq .Verb "RECOVERED"}}:white_check_mark: **{{.Check.Name}}** is back UP after a {{.From}} blip.
+  {{else}}:information_source: **{{.Check.Name}}** is online ({{.VerbLower}}).{{end}}
+```
+
+**2. SMTP subject with severity prefix and run-length detail** —
+pipes `Verb` through `printf` for padding and only mentions the
+report count when it actually matters:
+
+```yaml
+subject_template: '[{{printf "%-9s" .Verb}}] {{.Check.Name}} — {{.Check.Target}}'
+body_template: |
+  Check:    {{.Check.Name}} ({{.Check.Type}})
+  Target:   {{.Check.Target}}
+  Status:   {{.Verb}} (was {{.From}})
+  Reporter: {{.NodeID}}
+  At:       {{.When}}
+  {{if gt .Snapshot.Reports 1}}
+  Quorum:   {{.Snapshot.OKCount}} ok / {{.Snapshot.NotOK}} failing across {{.Snapshot.Reports}} reports.
+  {{end}}{{with .Snapshot.Detail}}
+  Detail:   {{.}}
+  {{end}}
+```
+
+**3. PagerDuty-style severity routing** — nest `if`/`else if` so a
+single template can produce three different first lines without
+duplicating the rest of the body:
+
+```yaml
+subject_template: >-
+  {{if eq .Verb "DOWN"}}P1: {{.Check.Name}} hard down
+  {{else if eq .Verb "RECOVERED"}}P3: {{.Check.Name}} recovered
+  {{else}}P4: {{.Check.Name}} {{.VerbLower}}{{end}}
+body_template: |
+  {{/* Header line — uses .VerbLower so the prose reads naturally */}}
+  {{.Check.Name}} ({{.Check.Target}}) is now {{.VerbLower}}.
+
+  {{if eq .Verb "DOWN"-}}
+  This is a real outage. Quorum: {{.Snapshot.NotOK}}/{{.Snapshot.Reports}} reporters see it failing.
+  Detail from the first failing probe: {{.Snapshot.Detail}}
+  Acknowledge in the runbook before paging on-call.
+  {{- else if eq .Verb "RECOVERED" -}}
+  Recovered after a {{.From}} period. No action needed; this is informational.
+  {{- else -}}
+  First successful probe after {{.From}}. Marking healthy.
+  {{- end}}
+
+  — {{.NodeID}} at {{.When}}
+```
+
+The `{{-` / `-}}` trim adjacent whitespace, which keeps the rendered
+output tidy even when the template itself is indented for readability.
+
+If a template fails to parse or panics at execute time, the
+dispatcher falls back to the default `Render` output for that field
+and logs the error — your alert still ships, you just lose the
+custom formatting until you fix the template.
 
 ## Edit cluster.yaml directly
 
