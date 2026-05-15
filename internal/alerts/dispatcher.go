@@ -27,7 +27,7 @@ func New(cluster *config.ClusterConfig, selfID string, logger *log.Logger) *Disp
 
 // OnTransition is wired as checks.TransitionFn.
 func (d *Dispatcher) OnTransition(check *config.Check, from, to checks.State, snap checks.Snapshot) {
-	if to == checks.StateUnknown {
+	if !shouldAlert(from, to) {
 		return
 	}
 	alerts := d.cluster.EffectiveAlertsFor(check)
@@ -75,6 +75,25 @@ func (d *Dispatcher) Test(alertID string) error {
 		return fmt.Errorf("render template: %w", err)
 	}
 	return d.dispatchOne(alert, msg)
+}
+
+// shouldAlert decides whether a committed state transition warrants
+// firing the configured alert channels.
+//
+// A fresh master's aggregator starts every check at StateUnknown, so
+// the first successful evaluation always commits Unknown→Up. Without
+// filtering, every master failover (or daemon restart) would spam an
+// "is now UP" alert for every healthy check. We treat Unknown→Up as a
+// silent cold start; real recoveries (Down→Up) and any transition to
+// Down still alert.
+func shouldAlert(from, to checks.State) bool {
+	if to == checks.StateUnknown {
+		return false
+	}
+	if from == checks.StateUnknown && to == checks.StateUp {
+		return false
+	}
+	return true
 }
 
 func (d *Dispatcher) dispatchOne(a *config.Alert, msg Message) error {
