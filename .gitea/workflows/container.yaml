@@ -42,17 +42,27 @@ jobs:
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
+        with:
+          # Skip the GHA-cache lookup for the binfmt image. The Gitea
+          # runner has no GHA cache server, so the action would
+          # otherwise sit in a ~5-minute TCP timeout before falling
+          # back to a direct docker pull. Going straight to pull
+          # cuts QEMU setup from ~5 min to ~15 s.
+          cache-image: false
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # github.repository is owner/name in the repo's original casing;
-      # registries require lowercase. Normalise once and reuse below.
+      # Registries want lowercase namespaces, and Gitea's container
+      # registry is case-sensitive on the login username too. Lowercase
+      # both repo path and actor once here and reuse below.
       - name: Resolve image name
         id: img
         run: |
           repo='${{ github.repository }}'
+          actor='${{ github.actor }}'
           echo "ref=git.cer.sh/${repo,,}" >> "$GITHUB_OUTPUT"
+          echo "user=${actor,,}" >> "$GITHUB_OUTPUT"
 
       # Version stamp baked into the binary via -ldflags. Tag pushes
       # use the tag name directly; everything else gets a short SHA
@@ -67,13 +77,20 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
+      # Prefers a user-provided PAT (repo secret REGISTRY_TOKEN with
+      # `write:package` scope) and falls back to the auto-injected
+      # runner token. The auto-token works on Gitea >= 1.21 when the
+      # workflow declares `packages: write` in permissions, but if
+      # the registry still rejects it (older instance, container
+      # registry gated by config, etc.), REGISTRY_TOKEN takes over
+      # without any workflow edits.
       - name: Login to Gitea registry
         if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: git.cer.sh
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ steps.img.outputs.user }}
+          password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
