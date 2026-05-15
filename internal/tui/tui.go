@@ -132,6 +132,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeTabs()
+		if m.modal != nil {
+			m.modal, _ = m.modal.Update(msg)
+		}
 		return m, nil
 
 	case tickMsg:
@@ -175,8 +178,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Modal grabs all input while open.
 	if m.modal != nil {
+		prev := m.modal
 		newModal, cmd := m.modal.Update(msg)
 		m.modal = newModal
+		// If the modal handed off to a different modal (e.g. picker →
+		// form), seed the new one with the current terminal size so its
+		// text inputs can size themselves on first paint.
+		if newModal != nil && newModal != prev {
+			m.seedModalSize()
+		}
 		return m, cmd
 	}
 
@@ -223,6 +233,7 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadStatusCmd(), loadConfigCmd())
 	case "a":
 		m.modal = m.openAddPicker()
+		m.seedModalSize()
 		return m, nil
 	case "d":
 		return m.openRemoveConfirm()
@@ -501,7 +512,18 @@ func (m model) openRemoveConfirm() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.modal = newConfirm(prompt, run)
+	m.seedModalSize()
 	return m, nil
+}
+
+// seedModalSize forwards the current terminal dimensions to the modal
+// so its inputs can size themselves on first paint. Called whenever a
+// new modal is installed.
+func (m *model) seedModalSize() {
+	if m.modal == nil || m.width == 0 {
+		return
+	}
+	m.modal, _ = m.modal.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 }
 
 // openEditForm dispatches to the right pre-filled edit form based on the
@@ -519,6 +541,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 		for i := range m.peersFull {
 			if m.peersFull[i].NodeID == id {
 				m.modal = newEditNodeForm(m.peersFull[i])
+				m.seedModalSize()
 				return m, nil
 			}
 		}
@@ -534,6 +557,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 		for i := range m.checksFull {
 			if m.checksFull[i].ID == id {
 				m.modal = newEditCheckForm(m.checksFull[i])
+				m.seedModalSize()
 				return m, nil
 			}
 		}
@@ -559,6 +583,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 				m.setFlash("unsupported alert type", flashError)
 				return m, nil
 			}
+			m.seedModalSize()
 			return m, nil
 		}
 		m.setFlash("alert not found in local cluster.yaml", flashError)

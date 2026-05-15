@@ -63,8 +63,25 @@ type form struct {
 	cursor int
 	busy   bool
 	err    string
+	width  int // current terminal width; inputs resize to fill it
 
 	submit func(values []string) tea.Cmd
+}
+
+// defaultFieldWidth is the fallback input width used before the first
+// WindowSizeMsg has arrived. Once we know the terminal size, inputs
+// grow to fill the available horizontal space.
+const defaultFieldWidth = 40
+
+// fieldWidthFor derives the per-input visible width from the terminal
+// width. It subtracts the modal's border+padding (6) and the form's
+// label indent (2), then a couple of chars of safety margin.
+func fieldWidthFor(termWidth int) int {
+	w := termWidth - 12
+	if w < defaultFieldWidth {
+		return defaultFieldWidth
+	}
+	return w
 }
 
 func newForm(title string, fields []formField, submit func([]string) tea.Cmd) *form {
@@ -89,7 +106,7 @@ func textField(label, hint string, required bool) formField {
 // contents and can tweak instead of retyping everything.
 func textFieldWithValue(label, hint, value string, required bool) formField {
 	ti := textinput.New()
-	ti.Width = 40
+	ti.Width = defaultFieldWidth
 	ti.Placeholder = hint
 	if value != "" {
 		ti.SetValue(value)
@@ -106,7 +123,7 @@ func passwordField(label, hint string) formField {
 // the actual value leaking on-screen.
 func passwordFieldWithValue(label, hint, value string) formField {
 	ti := textinput.New()
-	ti.Width = 40
+	ti.Width = defaultFieldWidth
 	ti.Placeholder = hint
 	ti.EchoMode = textinput.EchoPassword
 	ti.EchoCharacter = '•'
@@ -148,6 +165,14 @@ func (f *form) View() string {
 
 func (f *form) Update(msg tea.Msg) (modal, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		f.width = msg.Width
+		w := fieldWidthFor(msg.Width)
+		for i := range f.fields {
+			f.fields[i].input.Width = w
+		}
+		return f, nil
+
 	case formSubmitErr:
 		f.busy = false
 		f.err = string(msg)
