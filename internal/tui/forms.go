@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -51,10 +52,45 @@ func modalDoneCmd(flash string, level flashLevel) tea.Cmd {
 // =============================================================
 
 type formField struct {
-	label    string
-	input    textinput.Model
-	required bool
-	hint     string
+	label     string
+	input     textinput.Model
+	textarea  textarea.Model
+	multiline bool
+	required  bool
+	hint      string
+}
+
+// value returns the field's current text regardless of whether it's
+// backed by a single-line input or a multiline textarea.
+func (fld *formField) value() string {
+	if fld.multiline {
+		return fld.textarea.Value()
+	}
+	return fld.input.Value()
+}
+
+func (fld *formField) focus() {
+	if fld.multiline {
+		fld.textarea.Focus()
+		return
+	}
+	fld.input.Focus()
+}
+
+func (fld *formField) blur() {
+	if fld.multiline {
+		fld.textarea.Blur()
+		return
+	}
+	fld.input.Blur()
+}
+
+func (fld *formField) setWidth(w int) {
+	if fld.multiline {
+		fld.textarea.SetWidth(w)
+		return
+	}
+	fld.input.Width = w
 }
 
 type form struct {
@@ -86,12 +122,14 @@ func fieldWidthFor(termWidth int) int {
 
 func newForm(title string, fields []formField, submit func([]string) tea.Cmd) *form {
 	for i := range fields {
-		fields[i].input.Prompt = ""
-		fields[i].input.CharLimit = 256
+		if !fields[i].multiline {
+			fields[i].input.Prompt = ""
+			fields[i].input.CharLimit = 256
+		}
 		if i == 0 {
-			fields[i].input.Focus()
+			fields[i].focus()
 		} else {
-			fields[i].input.Blur()
+			fields[i].blur()
 		}
 	}
 	return &form{title: title, fields: fields, submit: submit}
@@ -112,6 +150,31 @@ func textFieldWithValue(label, hint, value string, required bool) formField {
 		ti.SetValue(value)
 	}
 	return formField{label: label, hint: hint, required: required, input: ti}
+}
+
+// textAreaField creates a multiline field. Enter inserts a newline;
+// the form uses shift+enter / ctrl+s to submit when the cursor is on
+// one of these. Useful for things like alert body templates where the
+// rendered message naturally spans multiple lines.
+func textAreaField(label, hint string, required bool) formField {
+	return textAreaFieldWithValue(label, hint, "", required)
+}
+
+func textAreaFieldWithValue(label, hint, value string, required bool) formField {
+	ta := textarea.New()
+	ta.Placeholder = hint
+	ta.ShowLineNumbers = false
+	ta.Prompt = "  "
+	ta.SetHeight(5)
+	ta.SetWidth(defaultFieldWidth)
+	ta.CharLimit = 0
+	// Keep enter bound to "insert newline" (the textarea default) — the
+	// surrounding form intercepts enter on single-line fields and handles
+	// shift+enter/ctrl+s as the submit/advance trigger for multiline ones.
+	if value != "" {
+		ta.SetValue(value)
+	}
+	return formField{label: label, hint: hint, required: required, multiline: true, textarea: ta}
 }
 
 func passwordField(label, hint string) formField {
@@ -146,7 +209,11 @@ func (f *form) View() string {
 			labelStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		}
 		fmt.Fprintf(&b, "%s%s\n", marker, labelStyle.Render(fld.label))
-		fmt.Fprintf(&b, "  %s\n", fld.input.View())
+		if fld.multiline {
+			fmt.Fprintf(&b, "%s\n", fld.textarea.View())
+		} else {
+			fmt.Fprintf(&b, "  %s\n", fld.input.View())
+		}
 		if i == f.cursor && fld.hint != "" {
 			fmt.Fprintf(&b, "  %s\n", helpStyle.Render(fld.hint))
 		}
@@ -158,7 +225,11 @@ func (f *form) View() string {
 	if f.busy {
 		fmt.Fprintf(&b, "%s\n", flashWarnStyle.Render("working…"))
 	} else {
-		fmt.Fprintf(&b, "%s\n", helpStyle.Render("↑↓ field   enter next/submit   esc cancel"))
+		help := "↑↓ field   enter next/submit   esc cancel"
+		if f.cursor < len(f.fields) && f.fields[f.cursor].multiline {
+			help = "tab field   enter newline   shift+enter/ctrl+s submit   esc cancel"
+		}
+		fmt.Fprintf(&b, "%s\n", helpStyle.Render(help))
 	}
 	return b.String()
 }
@@ -169,7 +240,7 @@ func (f *form) Update(msg tea.Msg) (modal, tea.Cmd) {
 		f.width = msg.Width
 		w := fieldWidthFor(msg.Width)
 		for i := range f.fields {
-			f.fields[i].input.Width = w
+			f.fields[i].setWidth(w)
 		}
 		return f, nil
 
@@ -179,43 +250,74 @@ func (f *form) Update(msg tea.Msg) (modal, tea.Cmd) {
 		return f, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		// up/down on a multiline field belong to in-text navigation;
+		// leave field-switching to tab/shift+tab there. Same for enter:
+		// the textarea owns it as "insert newline", so submission moves
+		// to shift+enter / ctrl+s.
+		multiline := f.cursor < len(f.fields) && f.fields[f.cursor].multiline
+		switch key {
 		case "esc":
 			return f, modalDoneCmd("", flashInfo)
-		case "tab", "down":
+		case "tab":
 			f.advance(1)
 			return f, nil
-		case "shift+tab", "up":
+		case "shift+tab":
 			f.advance(-1)
 			return f, nil
-		case "enter":
-			if f.busy {
-				return f, nil
-			}
-			if f.cursor < len(f.fields)-1 {
+		case "down":
+			if !multiline {
 				f.advance(1)
 				return f, nil
 			}
-			vals := make([]string, len(f.fields))
-			for i, fld := range f.fields {
-				vals[i] = fld.input.Value()
+		case "up":
+			if !multiline {
+				f.advance(-1)
+				return f, nil
 			}
-			for i, fld := range f.fields {
-				if fld.required && strings.TrimSpace(vals[i]) == "" {
-					f.err = fld.label + " is required"
-					f.cursor = i
-					f.focusOnly(i)
-					return f, nil
-				}
+		case "enter":
+			if !multiline {
+				return f, f.submitOrAdvance()
 			}
-			f.busy = true
-			f.err = ""
-			return f, f.submit(vals)
+		case "shift+enter", "ctrl+s":
+			return f, f.submitOrAdvance()
 		}
 	}
 	var cmd tea.Cmd
-	f.fields[f.cursor].input, cmd = f.fields[f.cursor].input.Update(msg)
+	if f.fields[f.cursor].multiline {
+		f.fields[f.cursor].textarea, cmd = f.fields[f.cursor].textarea.Update(msg)
+	} else {
+		f.fields[f.cursor].input, cmd = f.fields[f.cursor].input.Update(msg)
+	}
 	return f, cmd
+}
+
+// submitOrAdvance is the shared trigger for enter on single-line fields
+// and shift+enter / ctrl+s on multiline fields: jump to the next field
+// or, on the last one, validate and run submit.
+func (f *form) submitOrAdvance() tea.Cmd {
+	if f.busy {
+		return nil
+	}
+	if f.cursor < len(f.fields)-1 {
+		f.advance(1)
+		return nil
+	}
+	vals := make([]string, len(f.fields))
+	for i := range f.fields {
+		vals[i] = f.fields[i].value()
+	}
+	for i, fld := range f.fields {
+		if fld.required && strings.TrimSpace(vals[i]) == "" {
+			f.err = fld.label + " is required"
+			f.cursor = i
+			f.focusOnly(i)
+			return nil
+		}
+	}
+	f.busy = true
+	f.err = ""
+	return f.submit(vals)
 }
 
 func (f *form) advance(delta int) {
@@ -230,9 +332,9 @@ func (f *form) advance(delta int) {
 func (f *form) focusOnly(i int) {
 	for j := range f.fields {
 		if j == i {
-			f.fields[j].input.Focus()
+			f.fields[j].focus()
 		} else {
-			f.fields[j].input.Blur()
+			f.fields[j].blur()
 		}
 	}
 }
@@ -294,7 +396,7 @@ func newAddDiscordForm() *form {
 		textField("Name", "human-friendly identifier", true),
 		textField("Webhook URL", "https://discord.com/api/webhooks/...", true),
 		textField("Default", "yes/no — attach to every check automatically", false),
-		textField("Body template", alerts.TemplateVarsHint(), false),
+		textAreaField("Body template", alerts.TemplateVarsHint(), false),
 	}
 	return newForm("Add Discord alert", fields, func(vals []string) tea.Cmd {
 		return func() tea.Msg {
@@ -326,7 +428,7 @@ func newAddSMTPForm() *form {
 		textField("StartTLS", "yes/no — default yes", false),
 		textField("Default", "yes/no — attach to every check", false),
 		textField("Subject template", alerts.TemplateVarsHint(), false),
-		textField("Body template", alerts.TemplateVarsHint(), false),
+		textAreaField("Body template", alerts.TemplateVarsHint(), false),
 	}
 	return newForm("Add SMTP alert", fields, func(vals []string) tea.Cmd {
 		return func() tea.Msg {
@@ -467,7 +569,7 @@ func newEditDiscordForm(existing config.Alert) *form {
 		textFieldWithValue("Name", "human-friendly identifier", existing.Name, true),
 		textFieldWithValue("Webhook URL", "https://discord.com/api/webhooks/...", existing.DiscordWebhook, true),
 		textFieldWithValue("Default", "yes/no — attach to every check automatically", boolStr(existing.Default), false),
-		textFieldWithValue("Body template", alerts.TemplateVarsHint(), existing.BodyTemplate, false),
+		textAreaFieldWithValue("Body template", alerts.TemplateVarsHint(), existing.BodyTemplate, false),
 	}
 	id := existing.ID
 	subject := existing.SubjectTemplate
@@ -506,7 +608,7 @@ func newEditSMTPForm(existing config.Alert) *form {
 		textFieldWithValue("StartTLS", "yes/no — default yes", boolStr(existing.SMTPStartTLS), false),
 		textFieldWithValue("Default", "yes/no — attach to every check", boolStr(existing.Default), false),
 		textFieldWithValue("Subject template", alerts.TemplateVarsHint(), existing.SubjectTemplate, false),
-		textFieldWithValue("Body template", alerts.TemplateVarsHint(), existing.BodyTemplate, false),
+		textAreaFieldWithValue("Body template", alerts.TemplateVarsHint(), existing.BodyTemplate, false),
 	}
 	id := existing.ID
 	return newForm("Edit SMTP alert", fields, func(vals []string) tea.Cmd {
