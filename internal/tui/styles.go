@@ -73,9 +73,3 @@ func renderState(s string) string {
 	}
 }
 
-func renderLive(live bool) string {
-	if live {
-		return stateUpStyle.Render("● live")
-	}
-	return stateDownStyle.Render("● dead")
-}

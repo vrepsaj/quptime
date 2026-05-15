@@ -241,10 +241,6 @@ func (f *form) focusOnly(i int) {
 // error inline without closing the form.
 type formSubmitErr string
 
-func submitErr(err error) tea.Cmd {
-	return func() tea.Msg { return formSubmitErr(err.Error()) }
-}
-
 // =============================================================
 // Specific forms.
 // =============================================================
