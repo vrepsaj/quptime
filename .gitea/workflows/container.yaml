@@ -1,12 +1,16 @@
 name: Container image
 
-# Builds the multi-arch container image. On tag push (v*) it logs in
-# to the Gitea registry on this host and publishes the image as
-# git.cer.sh/<owner>/<repo>:<version> plus :latest. On pull requests
-# it builds without pushing — purely a smoke test that the Dockerfile
-# still works.
+# Three modes, all driven by the same job:
+#   - Tag push (v*)      → full release: :v1.2.3, :1.2, :latest, :sha-<short>
+#   - Branch push        → canary:        :<branch>, :sha-<short>
+#   - Pull request       → smoke test:    build only, nothing pushed
+#
+# metadata-action emits the right subset of tags for each event based
+# on the `tags:` rules below — no manual branching needed.
 on:
   push:
+    branches:
+      - '**'
     tags:
       - 'v*'
   pull_request:
@@ -19,16 +23,13 @@ jobs:
   image:
     runs-on: ubuntu-latest
     # The default `ubuntu-latest` label on aether-runner maps to
-    # `node:16-bullseye`, which has no docker CLI — so the docker/*
-    # actions fail. Override the job container to catthehacker's
-    # act-compatible image (ships docker CLI + buildx) and mount the
-    # host's docker socket through. The runner already has the socket
-    # bind-mounted from the host (see docker.yml gitea-runner volume),
-    # so this exposes that same daemon to the nested job container.
+    # `node:16-bullseye`, which has no docker CLI. Override to an
+    # act-compatible image that ships docker + buildx. The runner
+    # already bind-mounts /var/run/docker.sock into every job
+    # container, so we do NOT add a `volumes:` entry — doing so
+    # produces a duplicate-mount error from the daemon.
     container:
       image: catthehacker/ubuntu:act-latest
-      volumes:
-        - /var/run/docker.sock:/var/run/docker.sock
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,14 +40,26 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # github.repository is owner/name with the repo's original casing;
-      # registries require lowercase, so normalise once here and reuse
-      # the result in metadata-action below.
+      # github.repository is owner/name in the repo's original casing;
+      # registries require lowercase. Normalise once and reuse below.
       - name: Resolve image name
         id: img
         run: |
           repo='${{ github.repository }}'
           echo "ref=git.cer.sh/${repo,,}" >> "$GITHUB_OUTPUT"
+
+      # Version stamp baked into the binary via -ldflags. Tag pushes
+      # use the tag name directly; everything else gets a short SHA
+      # suffix so `qu version` on a canary build is debuggable.
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            v="${GITHUB_REF_NAME}"
+          else
+            v="${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Login to Gitea registry
         if: github.event_name == 'push'
@@ -65,8 +78,10 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
 
-      - name: Build (and push on tag)
+      - name: Build (and push on push events)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -76,7 +91,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ steps.ver.outputs.version }}
           # Inline cache embeds layer metadata into the pushed image
           # itself — no external cache server needed, which keeps the
           # workflow self-contained on the Gitea runner.
