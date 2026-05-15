@@ -1,0 +1,60 @@
+name: Release
+
+# Mirrors .gitea/workflows/release.yaml — fires when the Gitea→GitHub
+# mirror pushes a `v*` tag, builds static Linux binaries for amd64 +
+# arm64, and publishes them to GitHub Releases alongside the Gitea
+# release the same tag produces upstream.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          check-latest: false
+          cache: false
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            out="dist/qu-${VERSION}-linux-${arch}"
+            echo "building ${out}"
+            GOOS=linux GOARCH="${arch}" \
+              go build \
+                -trimpath \
+                -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "${out}" \
+                ./cmd/qu
+          done
+          (cd dist && sha256sum qu-* > SHA256SUMS)
+          ls -lh dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/qu-*
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
