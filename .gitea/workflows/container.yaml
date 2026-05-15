@@ -30,6 +30,12 @@ jobs:
     # produces a duplicate-mount error from the daemon.
     container:
       image: catthehacker/ubuntu:act-latest
+    # aether-runner defaults `run:` blocks to POSIX `sh`, which
+    # chokes on bash-isms like ${var,,} (lowercase) and ${var:0:7}
+    # (substring). Pin bash for the whole job.
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
