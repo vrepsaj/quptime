@@ -91,7 +91,7 @@ type Alert struct {
 	// format. Discord ignores SubjectTemplate (it has no subject line);
 	// SMTP uses both. Available variables: {{.Check.Name}},
 	// {{.Check.Type}}, {{.Check.Target}}, {{.Check.ID}}, {{.From}},
-	// {{.To}}, {{.Verb}}, {{.Snapshot.Reports}}, {{.Snapshot.OKCount}},
+	// {{.To}}, {{.Verb}}, {{.VerbLower}}, {{.Snapshot.Reports}}, {{.Snapshot.OKCount}},
 	// {{.Snapshot.NotOK}}, {{.Snapshot.Detail}}, {{.NodeID}}, {{.When}}.
 	SubjectTemplate string `yaml:"subject_template,omitempty"`
 	BodyTemplate    string `yaml:"body_template,omitempty"`

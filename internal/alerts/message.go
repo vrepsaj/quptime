@@ -22,6 +22,7 @@ type TemplateContext struct {
 	From     string          // previous state name
 	To       string          // new state name
 	Verb     string          // "UP" | "DOWN" | "RECOVERED"
+	VerbLower string         // lowercase form of Verb ("up" | "down" | "recovered")
 	Snapshot checks.Snapshot // aggregate counts and detail
 	NodeID   string          // master that rendered the message
 	When     string          // RFC3339 timestamp
@@ -88,14 +89,16 @@ func RenderFor(alert *config.Alert, nodeID string, check *config.Check, from, to
 }
 
 func newContext(nodeID string, check *config.Check, from, to checks.State, snap checks.Snapshot) TemplateContext {
+	verb := transitionVerb(from, to)
 	return TemplateContext{
-		Check:    check,
-		From:     string(from),
-		To:       string(to),
-		Verb:     transitionVerb(from, to),
-		Snapshot: snap,
-		NodeID:   nodeID,
-		When:     time.Now().UTC().Format(time.RFC3339),
+		Check:     check,
+		From:      string(from),
+		To:        string(to),
+		Verb:      verb,
+		VerbLower: strings.ToLower(verb),
+		Snapshot:  snap,
+		NodeID:    nodeID,
+		When:      time.Now().UTC().Format(time.RFC3339),
 	}
 }
 

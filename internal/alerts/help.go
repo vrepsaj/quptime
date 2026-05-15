@@ -9,7 +9,7 @@ package alerts
 func TemplateVarsHint() string {
 	return "Go text/template — leave empty to use the built-in format.\n" +
 		"  Vars: {{.Check.Name}}, {{.Check.Target}}, {{.Check.Type}}, {{.Check.ID}},\n" +
-		"        {{.Verb}} (UP|DOWN|RECOVERED), {{.From}}, {{.To}}, {{.NodeID}}, {{.When}},\n" +
+		"        {{.Verb}} (UP|DOWN|RECOVERED), {{.VerbLower}}, {{.From}}, {{.To}}, {{.NodeID}}, {{.When}},\n" +
 		"        {{.Snapshot.Detail}}, {{.Snapshot.Reports}}, {{.Snapshot.OKCount}}, {{.Snapshot.NotOK}}"
 }
 
@@ -29,6 +29,7 @@ Available variables:
   {{.Check.Type}}        http | tcp | icmp
   {{.Check.ID}}          stable check UUID
   {{.Verb}}              UP | DOWN | RECOVERED
+  {{.VerbLower}}         lowercase form of Verb (up | down | recovered)
   {{.From}}              previous state name
   {{.To}}                new state name
   {{.NodeID}}            master node that rendered the message
