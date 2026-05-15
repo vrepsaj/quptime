@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.0.2] — 2026-05-15
+
+### Fixed
+
+- Text template field in the TUI did not support newlines, causing multi-line templates to render as a single line and losing formatting. This has been fixed by changing the field into a textarea and escaping the `enter` key to insert newlines.
+
 ## [v0.0.1] — 2026-05-15
 
 Initial public release.
