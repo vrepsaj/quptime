@@ -58,19 +58,20 @@ func DataDir() string {
 // SocketPath returns the unix socket used for local CLI ↔ daemon control.
 //
 // Resolution order:
-//  1. $QUPTIME_SOCKET — explicit operator override
+//  1. $QUPTIME_SOCKET — explicit operator override.
 //  2. $RUNTIME_DIRECTORY — set by systemd when the unit declares
-//     RuntimeDirectory=quptime. This is the path that matters in
-//     practice: with User=quptime + PrivateTmp=true, the daemon's
-//     /tmp is namespaced and invisible to the root CLI shell, so a
-//     /tmp fallback yields "no such file" even though the daemon is
-//     happily listening. Anchoring on $RUNTIME_DIRECTORY puts the
-//     socket at /run/quptime/quptime.sock, which is the same inode
-//     the root-CLI default (/var/run/quptime/…) reaches via the
-//     /var/run → /run symlink.
-//  3. /var/run/quptime/… when euid is 0 (CLI side, packaged installs)
-//  4. $XDG_RUNTIME_DIR/quptime/… for user-mode installs
-//  5. /tmp/quptime-<user>/… as a last resort
+//     RuntimeDirectory=quptime. This is the path the daemon uses
+//     when run under the packaged unit: /run/quptime/quptime.sock.
+//  3. The canonical system socket path — /run/quptime/quptime.sock —
+//     if it exists. This catches the CLI side regardless of who is
+//     invoking it: `sudo -u quptime qu status` strips RUNTIME_DIRECTORY
+//     and XDG_RUNTIME_DIR, so without this probe the CLI falls all
+//     the way through to /tmp/quptime-<user>/… and reports "no such
+//     file" even while the daemon is happily listening.
+//  4. /var/run/quptime/… when euid is 0 (CLI side, packaged installs
+//     on systems where /var/run isn't a symlink to /run).
+//  5. $XDG_RUNTIME_DIR/quptime/… for user-mode installs.
+//  6. /tmp/quptime-<user>/… as a last resort.
 func SocketPath() string {
 	if v := os.Getenv("QUPTIME_SOCKET"); v != "" {
 		return v
@@ -83,6 +84,18 @@ func SocketPath() string {
 			v = v[:i]
 		}
 		return filepath.Join(v, SocketName)
+	}
+	// If a system-managed daemon is already listening, route there
+	// regardless of euid. Without this, `sudo -u quptime qu …` can't
+	// find the socket the daemon (also running as quptime) created
+	// via RuntimeDirectory=.
+	for _, p := range []string{
+		"/run/quptime/" + SocketName,
+		"/var/run/quptime/" + SocketName,
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
 	}
 	if os.Geteuid() == 0 {
 		return "/var/run/quptime/" + SocketName

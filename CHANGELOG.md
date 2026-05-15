@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.1.1] — 2026-05-15
 
 ### Changed
 
@@ -18,6 +18,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `chmod -R`, a backup restore, or an accidental `sudo qu init`
   that left files owned by root). Unknown files in the dir are left
   alone.
+
+### Fixed
+
+- **CLI socket lookup as the daemon user.** `sudo -u quptime qu …`
+  no longer fails with `dial daemon socket /tmp/quptime-quptime/…:
+  no such file or directory` while the system daemon is running.
+  `config.SocketPath()` now probes the canonical systemd location
+  (`/run/quptime/quptime.sock`, then `/var/run/quptime/quptime.sock`)
+  regardless of euid before falling back to per-user paths, so the
+  CLI reaches the daemon's socket even when `sudo` has stripped
+  `RUNTIME_DIRECTORY` and `XDG_RUNTIME_DIR` from the environment.
 
 ## [v0.1.0] — 2026-05-15
 
@@ -128,3 +139,4 @@ Initial public release.
 
 [v0.0.1]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.0.1
 [v0.1.0]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.0
+[v0.1.1]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.1
