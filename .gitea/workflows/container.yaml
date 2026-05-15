@@ -18,6 +18,17 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    # The default `ubuntu-latest` label on aether-runner maps to
+    # `node:16-bullseye`, which has no docker CLI — so the docker/*
+    # actions fail. Override the job container to catthehacker's
+    # act-compatible image (ships docker CLI + buildx) and mount the
+    # host's docker socket through. The runner already has the socket
+    # bind-mounted from the host (see docker.yml gitea-runner volume),
+    # so this exposes that same daemon to the nested job container.
+    container:
+      image: catthehacker/ubuntu:act-latest
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     steps:
       - name: Checkout
         uses: actions/checkout@v4
