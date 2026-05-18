@@ -294,12 +294,15 @@ func (m model) View() tea.View {
 }
 
 func (m model) renderHeader() string {
-	outerW := m.width - 2
+	// lipgloss v2 includes the border in the value passed to Width (v1
+	// did not). headerStyle has Border + Padding(0,1), so the usable
+	// content area is outerW - 4 (2 border cols + 2 padding cols). We
+	// want the box to fill the full terminal width, so outerW = m.width.
+	outerW := m.width
 	if outerW < 20 {
 		outerW = 20
 	}
-	// headerStyle has Padding(0,1), so the usable content width is outerW-2.
-	innerW := outerW - 2
+	innerW := outerW - 4
 	if innerW < 1 {
 		innerW = 1
 	}
@@ -405,12 +408,15 @@ func (m model) renderActiveTab() string {
 	// row onto extra lines and push the page taller than m.height, clipping
 	// the top of the TUI. Truncate per line so the bordered box stays the
 	// exact bodyH rows we sized for.
+	// bodyStyle has Border + Padding(0,1), and lipgloss v2 includes the
+	// border in Width. So Width(m.width) gives a content area of
+	// m.width - 4, which matches the MaxWidth clip below.
 	innerW := m.width - 4
 	if innerW < 1 {
 		innerW = 1
 	}
 	view = lipgloss.NewStyle().MaxWidth(innerW).Render(view)
-	return bodyStyle.Width(m.width - 2).Render(view)
+	return bodyStyle.Width(m.width).Render(view)
 }
 
 func (m model) renderHelp() string {
