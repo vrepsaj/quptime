@@ -4,10 +4,11 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [unreleased]
+## [v0.2.0] — unreleased
 
 ### Added
 
+- **Update command** (`qu update`) to update the binary in-place atomically.
 - **Pre-deployment enrollment tokens** (`qu enroll create / list /
   approve / revoke / join`). Replace the shared `cluster_secret`
   model with single-use, time-limited, per-token credentials. Trust
@@ -35,6 +36,41 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   deprecation stub that prints the replacement.
 - **`qu init --secret`** flag, and the auto-generated cluster-secret
   print on bootstrap.
+
+### Upgrade notes
+
+Existing clusters keep working with **no operator action** beyond
+rolling out the new binary — peer trust lives in `trust.yaml` and
+`cluster.yaml.peers[].cert_pem`, neither of which depended on the
+cluster secret. On first start of the upgraded daemon you will see
+`node.yaml: clearing legacy cluster_secret field (enrollment tokens
+replace it)` in the log; that's the entire migration.
+
+Things to know:
+
+- **Don't add new peers mid-rollout.** During the window where some
+  nodes are upgraded and some are not, an upgraded node will reject
+  the legacy `Join` RPC and an un-upgraded node hasn't learned
+  `Enroll`. Finish the rolling upgrade first, then enroll new hosts.
+- **Update your runbooks** for adding nodes:
+  - Old: `qu init --advertise … --secret '<paste>'` on new host, then
+    `qu node add <new-host>:9901` on an existing node.
+  - New: `qu enroll create [--auto-approve]` on an existing node →
+    copy the printed `qu enroll join <token>` command and run it on
+    the new host.
+- **`QUPTIME_CLUSTER_SECRET=…`** lines in compose/systemd env are
+  silently ignored. They won't break anything but are misleading;
+  drop them when you next touch the file.
+- **Automation that called `qu node add` or passed `qu init --secret`**
+  will fail loudly — switch it over to `qu enroll`.
+- **Scripts that scraped the cluster secret** from `qu init` stderr
+  have nothing to scrape now; the new flow mints per-host tokens on
+  demand via `qu enroll create`.
+
+`trust.yaml`, `cluster.yaml`, peer relationships, checks, and alerts
+are all preserved across the upgrade. The new
+`cluster.yaml.pending_enrollments` field is `omitempty` so it does
+not appear in clusters that aren't using it.
 
 ## [v0.1.2] — 2026-05-18
 
