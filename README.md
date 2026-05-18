@@ -296,7 +296,7 @@ Keybindings:
 | `r`                 | force-refresh                                             |
 | `a`                 | add (opens a picker on Checks/Alerts; node form on Peers) |
 | `d`                 | remove the selected row (confirmation prompt)             |
-| `t`                 | send a test message to the selected alert                 |
+| `t`                 | fire a test transition: synthetic test message on Alerts; pick down/up/recovered on Checks |
 | `D`                 | toggle the selected alert's `default` flag                |
 | `q` / `Ctrl+C`      | quit                                                      |
 
@@ -363,6 +363,18 @@ or Body template field in the add/edit alert forms.
 "homepage going DOWN" transition, so you can verify rendering before
 production traffic depends on it. A template parse or execution error
 falls back to the built-in format and is logged.
+
+`qu check test <name> [--state down|up|recovered]` goes one step
+further: it fires a synthetic transition for a *real* check through
+**every** alert that would actually receive it (defaults plus the
+check's explicit `alert_ids`, minus `suppress_alert_ids`). The
+`Detail` is a type-aware placeholder — e.g. a TLS check renders as
+"cert expires in 7d", a DNS check as "lookup …: no such host" — so
+you can preview what your templates will look like for each probe
+type without waiting for a real outage. The hysteresis filter that
+normally suppresses Unknown→Up is bypassed for tests, so all three
+verbs (DOWN, RECOVERED, UP) actually fire. In the TUI, hit `t` on
+the Checks tab to get a picker for the same three transitions.
 
 ### Conditionals, pipelines, and worked examples
 
@@ -512,8 +524,11 @@ qu node remove <node-id>                      remove from cluster + trust
 qu check add http  <name> <url>  [--expect 200] [--interval 30s] [--body-match str] [--alerts a,b]
 qu check add tcp   <name> <host:port>
 qu check add icmp  <name> <host>
+qu check add tls   <name> <host[:port]>          [--warn-days 14] [--sni name]
+qu check add dns   <name> <hostname>             [--record a|aaaa|cname|mx|txt|ns] [--resolver host:port] [--expect substr]
 qu check list
 qu check remove <id-or-name>
+qu check test   <id-or-name> [--state down|up|recovered]  fire a synthetic transition to exercise alert templates
 qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default] [--subject … --body …]
 qu alert add discord <name> --webhook …                                                        [--default] [--body …]
 qu alert list / remove / test <id-or-name>

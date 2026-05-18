@@ -27,6 +27,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   pickers and via the manual-edit path in `cluster.yaml` (new fields:
   `tls_warn_days`, `tls_server_name`, `dns_record`, `dns_resolver`,
   `dns_expect`; all `omitempty`).
+- **`qu check test <id-or-name> [--state down|up|recovered]`** fires
+  a synthetic transition for a *real* check through every alert that
+  would actually receive it (defaults + explicit `alert_ids` minus
+  `suppress_alert_ids`), with a type-aware placeholder `Detail` so
+  TLS / DNS / HTTP templates render representative copy. The
+  hysteresis filter that normally suppresses Unknown→Up is bypassed
+  for tests, so all three verbs (DOWN, RECOVERED, UP) actually fire.
+  In the TUI, `t` on the Checks tab opens a picker for the same
+  three transitions; `t` on the Alerts tab still sends the simpler
+  per-channel synthetic test message it did before. New daemon
+  control method `check.test`; new dispatcher method
+  `Dispatcher.TestCheck`.
 - **Update command** (`qu update`) to update the binary in-place atomically.
 - **Pre-deployment enrollment tokens** (`qu enroll create / list /
   approve / revoke / join`). Replace the shared `cluster_secret`
