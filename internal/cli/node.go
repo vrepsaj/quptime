@@ -133,4 +133,3 @@ those, remove the node and add it again (which re-performs TOFU).`,
 	cmd.Flags().String("address", "", "new host:port advertise address")
 	return cmd
 }
-

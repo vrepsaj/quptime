@@ -333,8 +333,8 @@ func (r *Replicator) applyLocally(kind transport.MutationKind, payload json.RawM
 		case transport.MutationRecordEnrollPending:
 			// Payload: { "id": <enrollment-id>, "pending_join": <PendingJoin> }
 			var body struct {
-				ID          string                  `json:"id"`
-				PendingJoin *config.PendingJoin     `json:"pending_join"`
+				ID          string              `json:"id"`
+				PendingJoin *config.PendingJoin `json:"pending_join"`
 			}
 			if err := json.Unmarshal(payload, &body); err != nil {
 				return fmt.Errorf("decode record-pending: %w", err)
