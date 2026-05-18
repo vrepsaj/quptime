@@ -55,4 +55,5 @@ jobs:
           files: |-
             dist/qu-*
             dist/SHA256SUMS
+          pre_release: ${{ contains(github.ref_name, 'rc-') }}
           api_key: "${{ secrets.GITHUB_TOKEN }}"
