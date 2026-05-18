@@ -48,10 +48,21 @@ replace it)` in the log; that's the entire migration.
 
 Things to know:
 
-- **Don't add new peers mid-rollout.** During the window where some
-  nodes are upgraded and some are not, an upgraded node will reject
-  the legacy `Join` RPC and an un-upgraded node hasn't learned
-  `Enroll`. Finish the rolling upgrade first, then enroll new hosts.
+- **Don't add new peers — or issue tokens — mid-rollout.** Two
+  reasons:
+  1. An upgraded node rejects the legacy `Join` RPC, and an
+     un-upgraded node hasn't learned `Enroll`, so the actual
+     enrollment dance fails at the protocol layer.
+  2. The new `pending_enrollments` field in `cluster.yaml` is
+     unknown to v0.1.x daemons. If a v0.1.x node holds master
+     during the upgrade window and applies any mutation (a new
+     check, a peer-edit, a manual cluster.yaml save), it will
+     write the file back *without* that field — silently dropping
+     any outstanding tokens.
+
+  Finish the rolling upgrade everywhere, then start enrolling new
+  hosts. Don't run `qu enroll create` until every node is on
+  v0.2.0+.
 - **Update your runbooks** for adding nodes:
   - Old: `qu init --advertise … --secret '<paste>'` on new host, then
     `qu node add <new-host>:9901` on an existing node.
