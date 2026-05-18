@@ -210,12 +210,17 @@ and adds it to the local trust store. See
 ```yaml
 - id: 0006a1...           # UUIDv4, generated when the check is created
   name: homepage          # human-friendly, must be unique within cluster
-  type: http              # http | tcp | icmp
+  type: http              # http | tcp | icmp | tls | dns
   target: https://example.com
   interval: 30s           # Go duration syntax: 5s, 1m30s, 2h
   timeout: 10s            # default 10s
   expect_status: 200      # http only; 0 = accept anything < 400
   body_match: "OK"        # http only; substring match on response body
+  tls_warn_days: 14       # tls only; trip when cert expires within N days
+  tls_server_name: ""     # tls only; override SNI (default: host from target)
+  dns_record: a           # dns only; a|aaaa|cname|mx|txt|ns (default a)
+  dns_resolver: ""        # dns only; resolver host:port (default: system)
+  dns_expect: ""          # dns only; substring required in an answer
   alert_ids: [oncall]     # alerts attached explicitly
   suppress_alert_ids: []  # opt out of specific default alerts
 ```
@@ -226,10 +231,23 @@ Defaults:
 - `timeout`: 10s
 - `expect_status`: 0 → any 2xx is OK; otherwise the configured status
   must match exactly.
+- `tls_warn_days`: 14
+- `dns_record`: `a`
 
 ICMP checks default to **unprivileged UDP-mode pings** so the daemon
 does not need root. For raw ICMP, grant the capability — see
 [deployment/systemd.md](deployment/systemd.md).
+
+TLS checks dial the target over TLS and inspect the leaf certificate's
+`NotAfter`. Chain validity is intentionally **not** verified (self-signed
+targets are a legitimate use case); the check fires when the cert is
+expired or within `tls_warn_days` of expiry. Target may be a bare host,
+`host:port`, or a full `https://` URL — bare hosts default to port 443.
+
+DNS checks resolve the target via the configured resolver (or the
+system resolver if none). Empty answer sets fail. When `dns_expect` is
+set, at least one answer must contain that substring (case-insensitive)
+for the check to be UP.
 
 ### `alerts[]`
 

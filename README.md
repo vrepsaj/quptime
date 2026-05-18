@@ -219,7 +219,16 @@ qu alert add smtp   ops    --host smtp.example.com --port 587 \
 qu check add http  homepage https://example.com  --expect 200  --alerts oncall,ops
 qu check add tcp   db       db.internal:5432     --interval 15s
 qu check add icmp  gateway  10.0.0.1             --interval 5s
+qu check add tls   cert     example.com          --warn-days 14
+qu check add dns   apex     example.com          --record a --expect 93.184.
 ```
+
+`tls` watches the leaf certificate's expiry — it flips DOWN when the
+cert is expired or within `--warn-days` (default 14) of expiry. Chain
+validity is intentionally not verified, so self-signed endpoints work
+the same way. `dns` resolves the target (optionally against a specific
+`--resolver`) and can require a substring in at least one answer via
+`--expect`.
 
 Mutations always route to the master, which bumps a monotonic version
 and pushes the new `cluster.yaml` to every peer. If quorum is lost,

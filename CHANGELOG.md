@@ -8,6 +8,25 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **TLS cert-expiry probe** (`qu check add tls`). Dials the target
+  over TLS, captures the leaf certificate, and flips DOWN when it is
+  expired or within `--warn-days` (default 14) of expiry. Target may
+  be a bare host, `host:port`, or a full `https://` URL — bare hosts
+  default to `:443`. Chain validity is intentionally not verified, so
+  self-signed endpoints work the same way; the check is about
+  knowing when the cert needs rotating, not about trust. `--sni`
+  overrides the server name when the cert is presented by a different
+  hostname than the dial target.
+- **DNS probe** (`qu check add dns`). Resolves the target with the
+  configured `--record` type (`a` | `aaaa` | `cname` | `mx` | `txt` |
+  `ns`, default `a`), optionally via a specific `--resolver`
+  (e.g. `1.1.1.1:53`), and flips DOWN on `NXDOMAIN`, an empty answer
+  set, or — when `--expect <substring>` is given — when no answer
+  contains the required substring (case-insensitive).
+- Both new check types are also available via the TUI add/edit
+  pickers and via the manual-edit path in `cluster.yaml` (new fields:
+  `tls_warn_days`, `tls_server_name`, `dns_record`, `dns_resolver`,
+  `dns_expect`; all `omitempty`).
 - **Update command** (`qu update`) to update the binary in-place atomically.
 - **Pre-deployment enrollment tokens** (`qu enroll create / list /
   approve / revoke / join`). Replace the shared `cluster_secret`
