@@ -47,11 +47,32 @@ func addCheckCmd(root *cobra.Command) {
 			return nil
 		})
 
+	addTLS := buildAddCheckCmd(config.CheckTLS, "tls", "<name> <host[:port]>",
+		"Add a TLS cert-expiry check",
+		func(args []string, c *config.Check) error {
+			c.Name = args[0]
+			c.Target = args[1]
+			return nil
+		})
+	addTLS.Flags().Int("warn-days", 14, "fail the check when the cert has fewer than this many days of validity left")
+	addTLS.Flags().String("sni", "", "override the SNI sent during the handshake (default: host from target)")
+
+	addDNS := buildAddCheckCmd(config.CheckDNS, "dns", "<name> <hostname>",
+		"Add a DNS resolution check",
+		func(args []string, c *config.Check) error {
+			c.Name = args[0]
+			c.Target = args[1]
+			return nil
+		})
+	addDNS.Flags().String("record", "a", "DNS record type to query: a|aaaa|cname|mx|txt|ns")
+	addDNS.Flags().String("resolver", "", "resolver to query, e.g. 1.1.1.1:53 (default: system resolver)")
+	addDNS.Flags().String("expect", "", "substring that must appear in at least one answer (optional)")
+
 	addParent := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new check",
 	}
-	addParent.AddCommand(addHTTP, addTCP, addICMP)
+	addParent.AddCommand(addHTTP, addTCP, addICMP, addTLS, addDNS)
 
 	listCmd := &cobra.Command{
 		Use:   "list",
@@ -159,11 +180,19 @@ all other fields are preserved from the existing record. HTTP-only flags
 				}
 			}
 			if f.Changed("expect") {
-				if existing.Type != config.CheckHTTP {
-					return fmt.Errorf("--expect only applies to HTTP checks (this is %s)", existing.Type)
+				v, _ := f.GetString("expect")
+				switch existing.Type {
+				case config.CheckHTTP:
+					n, err := parsePositiveInt(v)
+					if err != nil {
+						return fmt.Errorf("--expect: %w", err)
+					}
+					existing.ExpectStatus = n
+				case config.CheckDNS:
+					existing.DNSExpect = strings.TrimSpace(v)
+				default:
+					return fmt.Errorf("--expect only applies to HTTP or DNS checks (this is %s)", existing.Type)
 				}
-				v, _ := f.GetInt("expect")
-				existing.ExpectStatus = v
 			}
 			if f.Changed("body-match") {
 				if existing.Type != config.CheckHTTP {
@@ -171,6 +200,34 @@ all other fields are preserved from the existing record. HTTP-only flags
 				}
 				v, _ := f.GetString("body-match")
 				existing.BodyMatch = v
+			}
+			if f.Changed("warn-days") {
+				if existing.Type != config.CheckTLS {
+					return fmt.Errorf("--warn-days only applies to TLS checks (this is %s)", existing.Type)
+				}
+				v, _ := f.GetInt("warn-days")
+				existing.TLSWarnDays = v
+			}
+			if f.Changed("sni") {
+				if existing.Type != config.CheckTLS {
+					return fmt.Errorf("--sni only applies to TLS checks (this is %s)", existing.Type)
+				}
+				v, _ := f.GetString("sni")
+				existing.TLSServerName = strings.TrimSpace(v)
+			}
+			if f.Changed("record") {
+				if existing.Type != config.CheckDNS {
+					return fmt.Errorf("--record only applies to DNS checks (this is %s)", existing.Type)
+				}
+				v, _ := f.GetString("record")
+				existing.DNSRecord = strings.ToLower(strings.TrimSpace(v))
+			}
+			if f.Changed("resolver") {
+				if existing.Type != config.CheckDNS {
+					return fmt.Errorf("--resolver only applies to DNS checks (this is %s)", existing.Type)
+				}
+				v, _ := f.GetString("resolver")
+				existing.DNSResolver = strings.TrimSpace(v)
 			}
 
 			payload, err := json.Marshal(existing)
@@ -193,9 +250,30 @@ all other fields are preserved from the existing record. HTTP-only flags
 	cmd.Flags().String("interval", "", "new probe interval (e.g. 30s, 1m)")
 	cmd.Flags().String("timeout", "", "new per-probe timeout (e.g. 10s)")
 	cmd.Flags().String("alerts", "", "replace alert list with this CSV of IDs/names (pass empty to clear)")
-	cmd.Flags().Int("expect", 0, "expected HTTP status code (HTTP only)")
+	cmd.Flags().String("expect", "", "HTTP: expected status code; DNS: substring required in an answer")
 	cmd.Flags().String("body-match", "", "substring required in body (HTTP only)")
+	cmd.Flags().Int("warn-days", 0, "TLS: fail when cert expires within this many days")
+	cmd.Flags().String("sni", "", "TLS: override SNI sent during handshake")
+	cmd.Flags().String("record", "", "DNS: record type (a|aaaa|cname|mx|txt|ns)")
+	cmd.Flags().String("resolver", "", "DNS: resolver host:port (e.g. 1.1.1.1:53)")
 	return cmd
+}
+
+// parsePositiveInt is a small wrapper around strconv used to validate
+// the HTTP --expect status code in the unified --expect string flag.
+func parsePositiveInt(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return 0, fmt.Errorf("not a positive integer: %q", s)
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, nil
 }
 
 // buildAddCheckCmd produces the per-type "qu check add <type>" subcommand.
@@ -250,6 +328,20 @@ func buildAddCheckCmd(ctype config.CheckType, use, argSpec, short string,
 				bm, _ := cmd.Flags().GetString("body-match")
 				ch.ExpectStatus = es
 				ch.BodyMatch = bm
+			}
+			if ctype == config.CheckTLS {
+				wd, _ := cmd.Flags().GetInt("warn-days")
+				sni, _ := cmd.Flags().GetString("sni")
+				ch.TLSWarnDays = wd
+				ch.TLSServerName = strings.TrimSpace(sni)
+			}
+			if ctype == config.CheckDNS {
+				rec, _ := cmd.Flags().GetString("record")
+				res, _ := cmd.Flags().GetString("resolver")
+				exp, _ := cmd.Flags().GetString("expect")
+				ch.DNSRecord = strings.ToLower(strings.TrimSpace(rec))
+				ch.DNSResolver = strings.TrimSpace(res)
+				ch.DNSExpect = strings.TrimSpace(exp)
 			}
 
 			payload, err := json.Marshal(ch)

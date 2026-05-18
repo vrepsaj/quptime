@@ -369,10 +369,22 @@ func newAddCheckForm(checkType config.CheckType) *form {
 		textField("Timeout", "e.g. 10s", false),
 		textField("Alerts", "comma-separated alert IDs/names (optional)", false),
 	}
-	if checkType == config.CheckHTTP {
+	switch checkType {
+	case config.CheckHTTP:
 		fields = append(fields,
 			textField("Expect status", "e.g. 200 (HTTP only)", false),
 			textField("Body match", "substring required (HTTP only)", false),
+		)
+	case config.CheckTLS:
+		fields = append(fields,
+			textField("Warn days", "fail when cert expires within N days (default 14)", false),
+			textField("SNI", "override server name; blank = host from target", false),
+		)
+	case config.CheckDNS:
+		fields = append(fields,
+			textField("Record", "a | aaaa | cname | mx | txt | ns (default a)", false),
+			textField("Resolver", "host:port; blank = system resolver", false),
+			textField("Expect", "substring required in an answer (optional)", false),
 		)
 	}
 	return newForm("Add "+strings.ToUpper(string(checkType))+" check", fields, func(vals []string) tea.Cmd {
@@ -393,9 +405,17 @@ func newAddCheckForm(checkType config.CheckType) *form {
 					}
 				}
 			}
-			if checkType == config.CheckHTTP {
+			switch checkType {
+			case config.CheckHTTP:
 				ch.ExpectStatus = atoiOr(vals[5], 200)
 				ch.BodyMatch = strings.TrimSpace(vals[6])
+			case config.CheckTLS:
+				ch.TLSWarnDays = atoiOr(vals[5], 14)
+				ch.TLSServerName = strings.TrimSpace(vals[6])
+			case config.CheckDNS:
+				ch.DNSRecord = strings.ToLower(strings.TrimSpace(vals[5]))
+				ch.DNSResolver = strings.TrimSpace(vals[6])
+				ch.DNSExpect = strings.TrimSpace(vals[7])
 			}
 			if err := mutateAdd(transport.MutationAddCheck, ch); err != nil {
 				return formSubmitErr(err.Error())
@@ -559,6 +579,10 @@ func newEditCheckForm(existing config.Check) *form {
 	if existing.ExpectStatus > 0 {
 		expectStr = fmt.Sprintf("%d", existing.ExpectStatus)
 	}
+	warnDaysStr := ""
+	if existing.TLSWarnDays > 0 {
+		warnDaysStr = fmt.Sprintf("%d", existing.TLSWarnDays)
+	}
 
 	fields := []formField{
 		textFieldWithValue("Name", "human-friendly identifier", existing.Name, true),
@@ -567,10 +591,22 @@ func newEditCheckForm(existing config.Check) *form {
 		textFieldWithValue("Timeout", "e.g. 10s", timeoutStr, false),
 		textFieldWithValue("Alerts", "comma-separated alert IDs/names (optional)", strings.Join(existing.AlertIDs, ","), false),
 	}
-	if existing.Type == config.CheckHTTP {
+	switch existing.Type {
+	case config.CheckHTTP:
 		fields = append(fields,
 			textFieldWithValue("Expect status", "e.g. 200 (HTTP only)", expectStr, false),
 			textFieldWithValue("Body match", "substring required (HTTP only)", existing.BodyMatch, false),
+		)
+	case config.CheckTLS:
+		fields = append(fields,
+			textFieldWithValue("Warn days", "fail when cert expires within N days (default 14)", warnDaysStr, false),
+			textFieldWithValue("SNI", "override server name; blank = host from target", existing.TLSServerName, false),
+		)
+	case config.CheckDNS:
+		fields = append(fields,
+			textFieldWithValue("Record", "a | aaaa | cname | mx | txt | ns (default a)", existing.DNSRecord, false),
+			textFieldWithValue("Resolver", "host:port; blank = system resolver", existing.DNSResolver, false),
+			textFieldWithValue("Expect", "substring required in an answer (optional)", existing.DNSExpect, false),
 		)
 	}
 	checkType := existing.Type
@@ -595,9 +631,17 @@ func newEditCheckForm(existing config.Check) *form {
 					}
 				}
 			}
-			if checkType == config.CheckHTTP {
+			switch checkType {
+			case config.CheckHTTP:
 				ch.ExpectStatus = atoiOr(vals[5], 200)
 				ch.BodyMatch = strings.TrimSpace(vals[6])
+			case config.CheckTLS:
+				ch.TLSWarnDays = atoiOr(vals[5], 14)
+				ch.TLSServerName = strings.TrimSpace(vals[6])
+			case config.CheckDNS:
+				ch.DNSRecord = strings.ToLower(strings.TrimSpace(vals[5]))
+				ch.DNSResolver = strings.TrimSpace(vals[6])
+				ch.DNSExpect = strings.TrimSpace(vals[7])
 			}
 			if err := mutateAdd(transport.MutationAddCheck, ch); err != nil {
 				return formSubmitErr(err.Error())
@@ -906,6 +950,10 @@ func targetHint(t config.CheckType) string {
 		return "db.internal:5432"
 	case config.CheckICMP:
 		return "10.0.0.1"
+	case config.CheckTLS:
+		return "example.com[:443] or https://example.com"
+	case config.CheckDNS:
+		return "example.com"
 	}
 	return ""
 }

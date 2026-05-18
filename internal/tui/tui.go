@@ -450,6 +450,8 @@ func (m model) openAddPicker() modal {
 			{label: "HTTP", hint: "url + status code", choose: func() modal { return newAddCheckForm(config.CheckHTTP) }},
 			{label: "TCP", hint: "host:port connect", choose: func() modal { return newAddCheckForm(config.CheckTCP) }},
 			{label: "ICMP", hint: "ping a host", choose: func() modal { return newAddCheckForm(config.CheckICMP) }},
+			{label: "TLS", hint: "cert expiry warning", choose: func() modal { return newAddCheckForm(config.CheckTLS) }},
+			{label: "DNS", hint: "record resolution", choose: func() modal { return newAddCheckForm(config.CheckDNS) }},
 		})
 	case tabAlerts:
 		return newPicker("Add alert — pick type", []pickerOption{

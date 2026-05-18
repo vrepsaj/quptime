@@ -32,6 +32,8 @@ const (
 	CheckHTTP CheckType = "http"
 	CheckTCP  CheckType = "tcp"
 	CheckICMP CheckType = "icmp"
+	CheckTLS  CheckType = "tls"
+	CheckDNS  CheckType = "dns"
 )
 
 // Check describes a single monitored target.
@@ -46,6 +48,28 @@ type Check struct {
 	// HTTP-only options.
 	ExpectStatus int    `yaml:"expect_status,omitempty"`
 	BodyMatch    string `yaml:"body_match,omitempty"`
+
+	// TLS-only options.
+	//
+	// TLSWarnDays trips the check when the leaf certificate's
+	// NotAfter is within this many days of now. Default 14 when 0.
+	// TLSServerName overrides the SNI sent during the handshake;
+	// when empty, the host portion of Target is used.
+	TLSWarnDays   int    `yaml:"tls_warn_days,omitempty"`
+	TLSServerName string `yaml:"tls_server_name,omitempty"`
+
+	// DNS-only options.
+	//
+	// DNSRecord selects which record type to look up
+	// (a | aaaa | cname | mx | txt | ns). Default "a" when empty.
+	// DNSResolver is an optional "host:port" of a specific resolver
+	// to query (e.g. "1.1.1.1:53"). When empty, the system resolver
+	// is used. DNSExpect is an optional substring that must appear
+	// in at least one answer for the check to be UP; empty means a
+	// non-empty answer set is enough.
+	DNSRecord   string `yaml:"dns_record,omitempty"`
+	DNSResolver string `yaml:"dns_resolver,omitempty"`
+	DNSExpect   string `yaml:"dns_expect,omitempty"`
 
 	// AlertIDs lists which configured alerts fire when this check
 	// transitions state.

@@ -48,6 +48,10 @@ func Run(ctx context.Context, c *config.Check) Result {
 		p = tcpProber{}
 	case config.CheckICMP:
 		p = icmpProber{}
+	case config.CheckTLS:
+		p = tlsProber{}
+	case config.CheckDNS:
+		p = dnsProber{}
 	default:
 		return Result{
 			CheckID:   c.ID,
