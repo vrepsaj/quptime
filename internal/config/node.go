@@ -16,10 +16,15 @@ import (
 // Empty values are ignored — they do not clear a field. The override
 // order is therefore: env (non-empty) > file > compiled default.
 const (
-	EnvNodeID        = "QUPTIME_NODE_ID"
-	EnvBindAddr      = "QUPTIME_BIND_ADDR"
-	EnvBindPort      = "QUPTIME_BIND_PORT"
-	EnvAdvertise     = "QUPTIME_ADVERTISE"
+	EnvNodeID    = "QUPTIME_NODE_ID"
+	EnvBindAddr  = "QUPTIME_BIND_ADDR"
+	EnvBindPort  = "QUPTIME_BIND_PORT"
+	EnvAdvertise = "QUPTIME_ADVERTISE"
+
+	// EnvClusterSecret remains declared so existing docker/compose
+	// setups don't fail their env-validation steps after an upgrade,
+	// but the daemon no longer reads it. New nodes enroll via
+	// `qu enroll create` tokens (see internal/daemon/handlers.go).
 	EnvClusterSecret = "QUPTIME_CLUSTER_SECRET"
 )
 
@@ -40,12 +45,15 @@ type NodeConfig struct {
 	// from BindAddr when behind NAT. Set explicitly via `qu init --advertise`.
 	Advertise string `yaml:"advertise"`
 
-	// ClusterSecret is the pre-shared secret every node in the cluster
-	// must present during the Join RPC. Without it any operator who
-	// can reach :9901 could enrol themselves into the cluster, so we
-	// require an out-of-band copy at `qu init` time. Stored locally
-	// only, never replicated.
-	ClusterSecret string `yaml:"cluster_secret"`
+	// ClusterSecret is the legacy pre-shared cluster join key. The
+	// daemon no longer reads or validates it — pre-deployment
+	// enrollment tokens (see internal/daemon/handlers.go) replaced
+	// the single-secret model. The field is kept so old node.yaml
+	// files continue to parse; the daemon blanks it on first start
+	// after an upgrade (see daemon.Daemon.New).
+	//
+	// Deprecated: set up new nodes with `qu enroll create` instead.
+	ClusterSecret string `yaml:"cluster_secret,omitempty"`
 }
 
 // AdvertiseAddr returns the address peers should dial. Falls back to
@@ -83,9 +91,10 @@ func (n *NodeConfig) ApplyEnvOverrides() error {
 	if v := os.Getenv(EnvAdvertise); v != "" {
 		n.Advertise = v
 	}
-	if v := os.Getenv(EnvClusterSecret); v != "" {
-		n.ClusterSecret = v
-	}
+	// QUPTIME_CLUSTER_SECRET is silently ignored: enrollment tokens
+	// have replaced the shared-secret join model. We do not surface
+	// an error for it because docker-compose files in the wild may
+	// still set it, and we'd rather not break their bring-up.
 	return nil
 }
 

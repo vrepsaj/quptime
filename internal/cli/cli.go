@@ -21,10 +21,12 @@ func NewRootCommand(version string) *cobra.Command {
 	addInitCmd(root)
 	addServeCmd(root)
 	addNodeCmd(root)
+	addEnrollCmd(root)
 	addCheckCmd(root)
 	addAlertCmd(root)
 	addTrustCmd(root)
 	addStatusCmd(root)
 	addTUICmd(root)
+	addUpdateCmd(root)
 	return root
 }

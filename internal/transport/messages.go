@@ -26,6 +26,7 @@ const (
 	MethodPing            = "Ping"
 	MethodWhoAmI          = "WhoAmI"
 	MethodJoin            = "Join"
+	MethodEnroll          = "Enroll"
 	MethodHeartbeat       = "Heartbeat"
 	MethodGetClusterCfg   = "GetClusterCfg"
 	MethodApplyClusterCfg = "ApplyClusterCfg"
@@ -58,13 +59,14 @@ type WhoAmIResponse struct {
 	CertPEM     string `json:"cert_pem"`
 }
 
-// JoinRequest is sent by a node that has just learned the remote's
-// fingerprint out of band and wants the remote to record this node in
-// its own trust store too (so the relationship is symmetric).
+// JoinRequest is the legacy bootstrap request. Kept declared only so
+// pre-v0.2.0 binaries that still send this message can finish their
+// framing — the new daemon's MethodJoin handler ignores the payload
+// entirely and always returns a deprecation message pointing at the
+// enrollment-token flow.
 //
-// ClusterSecret is the pre-shared cluster join key. The recipient
-// rejects the request unless it matches the locally-configured secret
-// in constant time.
+// Deprecated: use EnrollRequest. Will be removed once the installed
+// base has rotated past v0.2.0.
 type JoinRequest struct {
 	NodeID        string `json:"node_id"`
 	Advertise     string `json:"advertise"`
@@ -73,11 +75,91 @@ type JoinRequest struct {
 	ClusterSecret string `json:"cluster_secret"`
 }
 
-// JoinResponse echoes a non-empty Error string when the remote refuses
-// the join (e.g. operator declined the prompt or fingerprint mismatch).
+// JoinResponse is what the deprecation stub returns to a legacy peer
+// that tries the old Join flow. Error always carries a pointer at
+// `qu enroll`; Accepted is always false.
 type JoinResponse struct {
 	Accepted bool   `json:"accepted"`
 	Error    string `json:"error,omitempty"`
+}
+
+// EnrollRequest is sent by a new node presenting a pre-deployment
+// enrollment token. It replaces the cluster-secret Join flow: the
+// cluster operator generated TokenID + TokenSecret out-of-band, the
+// joiner presents them along with its full identity (NodeID, cert,
+// fingerprint), and the cluster authorizes membership.
+//
+// The TLS connection itself is authenticated by the joiner verifying
+// the cluster's leaf cert against the fingerprints baked into the
+// token *before* sending this request — so the joiner already knows
+// it is talking to the right cluster. The token-secret check here
+// authenticates the joiner to the cluster.
+type EnrollRequest struct {
+	TokenID     string `json:"token_id"`
+	TokenSecret string `json:"token_secret"`
+
+	NodeID      string `json:"node_id"`
+	Advertise   string `json:"advertise"`
+	Fingerprint string `json:"fingerprint"`
+	CertPEM     string `json:"cert_pem"`
+}
+
+// EnrollResponse is the cluster's reply to an enrollment attempt.
+//
+//   - Accepted=true  → joiner is now a peer. Cluster snapshot (with
+//     every existing peer's cert) is included so the
+//     joiner can populate its own trust store before
+//     starting `qu serve`.
+//   - Pending=true   → token valid but AutoApprove=false; the joiner's
+//     identity has been recorded. An operator on the
+//     cluster must run `qu enroll approve <id>` to
+//     finalize. Cluster (the snapshot) is not
+//     returned in this case — replication only kicks
+//     in once the joiner is a real peer.
+//   - Error          → the token was invalid (unknown, expired, secret
+//     mismatch) or the request itself was malformed.
+type EnrollResponse struct {
+	Accepted bool                  `json:"accepted"`
+	Pending  bool                  `json:"pending,omitempty"`
+	Error    string                `json:"error,omitempty"`
+	Cluster  *enrollClusterSummary `json:"cluster,omitempty"`
+}
+
+// enrollClusterSummary carries the minimum the joiner needs to trust
+// every existing peer post-acceptance: NodeID, advertise, and cert
+// PEM (fingerprint is derived from the cert).
+//
+// Defined as its own type rather than reusing config.PeerInfo to
+// avoid the transport package importing config (which currently
+// flows the other direction) and to make the wire shape explicit.
+type enrollClusterSummary struct {
+	Peers []EnrolledPeer `json:"peers"`
+}
+
+// EnrolledPeer is one peer's public material as shipped back to a
+// successful enrollee.
+type EnrolledPeer struct {
+	NodeID      string `json:"node_id"`
+	Advertise   string `json:"advertise"`
+	Fingerprint string `json:"fingerprint"`
+	CertPEM     string `json:"cert_pem"`
+}
+
+// NewEnrollSummary builds the success-response payload from a slice of
+// peers. Exported so the daemon can construct it from config.PeerInfo
+// without the transport package depending on the config package.
+func NewEnrollSummary(peers []EnrolledPeer) *enrollClusterSummary {
+	return &enrollClusterSummary{Peers: peers}
+}
+
+// EnrollSummaryPeers returns the peers from an enroll response, or nil
+// if the summary is nil. Helper to keep the unexported field accessible
+// without exposing the wrapping struct.
+func EnrollSummaryPeers(s *enrollClusterSummary) []EnrolledPeer {
+	if s == nil {
+		return nil
+	}
+	return s.Peers
 }
 
 // HeartbeatRequest is the periodic liveness ping sent over the
@@ -143,6 +225,13 @@ const (
 	// directly, the daemon detects it, and forwards the parsed snapshot
 	// to the master through this mutation.
 	MutationReplaceConfig MutationKind = "replace_config"
+
+	// Enrollment-token lifecycle. All four are master-only and route
+	// through the standard ProposeMutation path.
+	MutationAddEnrollment       MutationKind = "add_enrollment"
+	MutationRemoveEnrollment    MutationKind = "remove_enrollment"
+	MutationRecordEnrollPending MutationKind = "record_enroll_pending"
+	MutationApproveEnrollment   MutationKind = "approve_enrollment"
 )
 
 // ProposeMutationRequest is a follower-to-master message. The payload

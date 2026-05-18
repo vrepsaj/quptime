@@ -57,7 +57,7 @@ will bootstrap on first start without a separate `qu init` step.
 | `QUPTIME_BIND_ADDR`      | `bind_addr`       | Defaults to `0.0.0.0`.                                                                                         |
 | `QUPTIME_BIND_PORT`      | `bind_port`       | Integer. Defaults to `9901`.                                                                                   |
 | `QUPTIME_ADVERTISE`      | `advertise`       | `host:port` other peers use to reach this node. Required when bound to a wildcard or behind NAT.               |
-| `QUPTIME_CLUSTER_SECRET` | `cluster_secret`  | Pre-shared join secret. Set the same value on every node. If unset on the very first node, one is generated.   |
+| `QUPTIME_CLUSTER_SECRET` | `cluster_secret`  | **Deprecated, ignored.** Kept declared so older compose files don't error on validation. Pre-deployment enrollment tokens replaced it; see [security.md](security.md). |
 
 Precedence is **env > file > compiled default**. Non-empty env values
 win over whatever is stored in `node.yaml` at load time, so changing a
@@ -79,10 +79,10 @@ If `node.yaml` does not exist when `qu serve` starts, the daemon
 bootstraps it in-place using the `QUPTIME_*` env vars above: a fresh
 UUID is generated (or `QUPTIME_NODE_ID` is honored if set), an RSA
 keypair and self-signed cert are written under `keys/`, and
-`cluster.yaml` is seeded with this node as its sole peer. If no
-`QUPTIME_CLUSTER_SECRET` was provided, a random one is generated and
-printed to stderr — copy it to every follower node's
-`QUPTIME_CLUSTER_SECRET` (or `--secret` flag) before they start.
+`cluster.yaml` is seeded with this node as its sole peer. The host
+joins an existing cluster only after an operator redeems a pre-deployment
+token with `qu enroll join <token>`; serving with no enrollment leaves
+the node as a one-member cluster of its own.
 
 This is what makes the docker-compose flow `docker compose up`-only
 on a fresh volume. To opt out (e.g. so a misconfigured deployment
@@ -99,7 +99,8 @@ node_id: 7f3a5b9e-...        # UUIDv4, immutable after init
 bind_addr: 0.0.0.0           # listen address for :9901
 bind_port: 9901              # listen port
 advertise: alpha.example.com:9901   # how peers reach us; may differ from bind
-cluster_secret: 4hZqK8vT9... # base64; required to Join, never replicated
+# cluster_secret is no longer used. If present, the daemon clears it
+# on the next start. New nodes join via `qu enroll join <token>`.
 ```
 
 ### Field reference
@@ -116,10 +117,10 @@ cluster_secret: 4hZqK8vT9... # base64; required to Join, never replicated
 - `advertise` — Host:port other nodes use to reach this one. Must be
   routable from every peer. Falls back to `bind_addr:bind_port` if
   unset, which is rarely what you want behind NAT.
-- `cluster_secret` — Pre-shared base64 string. Required on every
-  `Join` RPC; constant-time comparison on the receiver. Generate on
-  the first node, distribute out-of-band, keep out of version
-  control.
+- `cluster_secret` — **Deprecated.** Vestigial field from the pre-1.0
+  shared-secret join model. The daemon does not consult it and blanks
+  it on first start. New nodes enrol via single-use tokens; see
+  [security.md](security.md).
 
 ### How `qu init` populates this file
 
@@ -127,9 +128,13 @@ cluster_secret: 4hZqK8vT9... # base64; required to Join, never replicated
 qu init \
   --advertise alpha.example.com:9901 \
   --bind 0.0.0.0 \
-  --port 9901 \
-  --secret '<paste from first node, or omit on the first node>'
+  --port 9901
 ```
+
+`qu init` is only for the *first* node of a brand-new cluster. To
+add a second host, run `qu enroll create` on the first node and
+`qu enroll join <token>` on the new one — it does the equivalent init
+*and* submits enrollment in one step.
 
 Idempotent in one direction only: if `node.yaml` exists, `qu init`
 refuses to overwrite. To re-init, delete the data directory entirely.
@@ -205,12 +210,17 @@ and adds it to the local trust store. See
 ```yaml
 - id: 0006a1...           # UUIDv4, generated when the check is created
   name: homepage          # human-friendly, must be unique within cluster
-  type: http              # http | tcp | icmp
+  type: http              # http | tcp | icmp | tls | dns
   target: https://example.com
   interval: 30s           # Go duration syntax: 5s, 1m30s, 2h
   timeout: 10s            # default 10s
   expect_status: 200      # http only; 0 = accept anything < 400
   body_match: "OK"        # http only; substring match on response body
+  tls_warn_days: 14       # tls only; trip when cert expires within N days
+  tls_server_name: ""     # tls only; override SNI (default: host from target)
+  dns_record: a           # dns only; a|aaaa|cname|mx|txt|ns (default a)
+  dns_resolver: ""        # dns only; resolver host:port (default: system)
+  dns_expect: ""          # dns only; substring required in an answer
   alert_ids: [oncall]     # alerts attached explicitly
   suppress_alert_ids: []  # opt out of specific default alerts
 ```
@@ -221,10 +231,23 @@ Defaults:
 - `timeout`: 10s
 - `expect_status`: 0 → any 2xx is OK; otherwise the configured status
   must match exactly.
+- `tls_warn_days`: 14
+- `dns_record`: `a`
 
 ICMP checks default to **unprivileged UDP-mode pings** so the daemon
 does not need root. For raw ICMP, grant the capability — see
 [deployment/systemd.md](deployment/systemd.md).
+
+TLS checks dial the target over TLS and inspect the leaf certificate's
+`NotAfter`. Chain validity is intentionally **not** verified (self-signed
+targets are a legitimate use case); the check fires when the cert is
+expired or within `tls_warn_days` of expiry. Target may be a bare host,
+`host:port`, or a full `https://` URL — bare hosts default to port 443.
+
+DNS checks resolve the target via the configured resolver (or the
+system resolver if none). Empty answer sets fail. When `dns_expect` is
+set, at least one answer must contain that substring (case-insensitive)
+for the check to be UP.
 
 ### `alerts[]`
 
@@ -295,10 +318,10 @@ Never edit this by hand. Use `qu trust list` and `qu trust remove`.
 
 ## Key material
 
-`keys/private.pem` is the only secret on disk besides
-`node.yaml.cluster_secret`. It's chmod 0600 by default; preserve that.
-The public cert at `keys/cert.pem` is what gets fingerprinted and
-shipped in `cluster.yaml.peers[].cert_pem`.
+`keys/private.pem` is the only long-lived secret on disk (enrollment
+tokens are minted on demand and short-lived). It's chmod 0600 by
+default; preserve that. The public cert at `keys/cert.pem` is what
+gets fingerprinted and shipped in `cluster.yaml.peers[].cert_pem`.
 
 There is **no automatic key rotation**. Rolling a node's identity
 means wiping its data directory, running `qu init` again, and

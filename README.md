@@ -135,46 +135,50 @@ git push --tags
 
 ## Set up a 3-node cluster
 
-On the **first host**:
+On the **first host**, bootstrap and start the daemon:
 
 ```sh
 qu init --advertise alpha.example.com:9901
-```
-
-That prints a random cluster secret. Copy it.
-
-On every **other host**, pass that secret via `--secret`:
-
-```sh
-qu init --advertise bravo.example.com:9901  --secret <paste>
-qu init --advertise charlie.example.com:9901 --secret <paste>
-```
-
-Without the matching secret a node cannot join, so random hosts that
-can reach :9901 are safely ignored.
-
-Start the daemon on every host (foreground; wire into systemd for prod):
-
-```sh
 qu serve
 ```
 
-Then on one node — usually `alpha` — invite the others. The CLI prints
-each remote's fingerprint and asks for confirmation SSH-style:
+For every additional host, mint a pre-deployment enrollment token on
+`alpha` and redeem it on the new host. Tokens are single-use,
+time-limited, and pin the cluster's TLS fingerprint so the new host
+can't be tricked into joining a different cluster.
 
 ```sh
-qu node add bravo.example.com:9901
-qu node add charlie.example.com:9901
+# On alpha (the existing cluster):
+qu enroll create --name bravo --auto-approve --ttl 1h
+# → prints a single `qu enroll join <token>` command, copy it.
+
+# On bravo (the new host, fresh data dir):
+qu enroll join <paste> --advertise bravo.example.com:9901
+qu serve
 ```
 
-After the first invite, give it a few seconds for heartbeats to bring
-the new peer into the live set before inviting the next one — otherwise
-the local node's "needs ≥2 live to mutate" check will reject the
-second add.
+`--auto-approve` makes the cluster accept the joiner automatically on
+submission — handy for cloud-init / Ansible. Drop the flag if you'd
+rather approve interactively from the cluster:
 
-You only need to invite from one node. Peer certs ride along with the
-replicated `cluster.yaml`, so every peer auto-trusts every other peer
-without `N×(N-1)` invites.
+```sh
+# On bravo:
+qu enroll join <token> --advertise bravo.example.com:9901
+# → prints: "enrollment submitted; waiting for cluster-side approval"
+
+# Back on alpha:
+qu enroll list                # see pending submissions
+qu enroll approve <token-id>  # commit; bravo becomes a peer
+```
+
+Either way, trust is acquired from both sides: the joiner verifies the
+cluster's TLS fingerprint (pinned into the token at create time) and
+the cluster verifies the joiner via the token's hashed secret. There
+is no shared cluster-wide secret — see [docs/security.md](docs/security.md)
+for the threat model.
+
+Peer certs ride along with the replicated `cluster.yaml`, so every
+peer auto-trusts every other peer without `N×(N-1)` enrollments.
 
 That's it — the master broadcasts the new cluster config to every
 trusting peer. `qu status` from any node should now show all three:
@@ -215,7 +219,16 @@ qu alert add smtp   ops    --host smtp.example.com --port 587 \
 qu check add http  homepage https://example.com  --expect 200  --alerts oncall,ops
 qu check add tcp   db       db.internal:5432     --interval 15s
 qu check add icmp  gateway  10.0.0.1             --interval 5s
+qu check add tls   cert     example.com          --warn-days 14
+qu check add dns   apex     example.com          --record a --expect 93.184.
 ```
+
+`tls` watches the leaf certificate's expiry — it flips DOWN when the
+cert is expired or within `--warn-days` (default 14) of expiry. Chain
+validity is intentionally not verified, so self-signed endpoints work
+the same way. `dns` resolves the target (optionally against a specific
+`--resolver`) and can require a substring in at least one answer via
+`--expect`.
 
 Mutations always route to the master, which bumps a monotonic version
 and pushes the new `cluster.yaml` to every peer. If quorum is lost,
@@ -283,7 +296,7 @@ Keybindings:
 | `r`                 | force-refresh                                             |
 | `a`                 | add (opens a picker on Checks/Alerts; node form on Peers) |
 | `d`                 | remove the selected row (confirmation prompt)             |
-| `t`                 | send a test message to the selected alert                 |
+| `t`                 | fire a test transition: synthetic test message on Alerts; pick down/up/recovered on Checks |
 | `D`                 | toggle the selected alert's `default` flag                |
 | `q` / `Ctrl+C`      | quit                                                      |
 
@@ -350,6 +363,18 @@ or Body template field in the add/edit alert forms.
 "homepage going DOWN" transition, so you can verify rendering before
 production traffic depends on it. A template parse or execution error
 falls back to the built-in format and is logged.
+
+`qu check test <name> [--state down|up|recovered]` goes one step
+further: it fires a synthetic transition for a *real* check through
+**every** alert that would actually receive it (defaults plus the
+check's explicit `alert_ids`, minus `suppress_alert_ids`). The
+`Detail` is a type-aware placeholder — e.g. a TLS check renders as
+"cert expires in 7d", a DNS check as "lookup …: no such host" — so
+you can preview what your templates will look like for each probe
+type without waiting for a real outage. The hysteresis filter that
+normally suppresses Unknown→Up is bypassed for tests, so all three
+verbs (DOWN, RECOVERED, UP) actually fire. In the TUI, hit `t` on
+the Checks tab to get a picker for the same three transitions.
 
 ### Conditionals, pipelines, and worked examples
 
@@ -485,23 +510,31 @@ sudo setcap cap_net_raw=+ep ./qu
 ## CLI reference
 
 ```
-qu init                                       generate identity + keys
+qu init                                       generate identity + keys (first node only)
 qu serve                                      run the daemon
 qu status                                     quorum, master, check states
 qu tui                                        interactive dashboard
-qu node add    <host:port>                    TOFU-add a peer
+qu enroll create [--name …] [--ttl 1h] [--auto-approve]  mint a pre-deployment token
+qu enroll list                                show outstanding tokens + pending approvals
+qu enroll approve <id-or-name>                approve a pending enrollment
+qu enroll revoke  <id-or-name>                revoke an outstanding token
+qu enroll join    <token> [--advertise …]     redeem a token on a new host
 qu node list                                  show peers + liveness
 qu node remove <node-id>                      remove from cluster + trust
 qu check add http  <name> <url>  [--expect 200] [--interval 30s] [--body-match str] [--alerts a,b]
 qu check add tcp   <name> <host:port>
 qu check add icmp  <name> <host>
+qu check add tls   <name> <host[:port]>          [--warn-days 14] [--sni name]
+qu check add dns   <name> <hostname>             [--record a|aaaa|cname|mx|txt|ns] [--resolver host:port] [--expect substr]
 qu check list
 qu check remove <id-or-name>
+qu check test   <id-or-name> [--state down|up|recovered]  fire a synthetic transition to exercise alert templates
 qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default] [--subject … --body …]
 qu alert add discord <name> --webhook …                                                        [--default] [--body …]
 qu alert list / remove / test <id-or-name>
 qu alert default <id-or-name> on|off            toggle default attachment to every check
 qu trust list / remove <node-id>
+qu update [--check] [--force] [--source gitea|github]   replace this binary with the latest release
 ```
 
 All `--interval` and `--timeout` flags accept Go duration syntax: `5s`,

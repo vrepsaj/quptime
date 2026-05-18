@@ -45,10 +45,11 @@ func (a *TLSAssets) tlsCert() (tls.Certificate, error) {
 //
 // We accept any client certificate at the TLS layer (no CA verification
 // and no fingerprint pinning here). Trust is enforced one layer up by
-// the RPC dispatcher: untrusted peers may only invoke MethodJoin, which
-// is the protocol's bootstrap step. This avoids the chicken-and-egg
-// where Join itself would need pre-existing symmetric trust to complete
-// the handshake.
+// the RPC dispatcher: untrusted peers may only invoke MethodEnroll
+// (the pre-deployment-token bootstrap step) or MethodJoin (kept as a
+// deprecation-error stub for older binaries). This avoids the
+// chicken-and-egg where enrolment itself would need pre-existing
+// symmetric trust to complete the handshake.
 func (a *TLSAssets) ServerConfig() (*tls.Config, error) {
 	cert, err := a.tlsCert()
 	if err != nil {

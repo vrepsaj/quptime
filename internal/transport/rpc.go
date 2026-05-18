@@ -123,11 +123,13 @@ func (s *Server) handleConn(ctx context.Context, raw net.Conn) {
 			return
 		}
 
-		// Until the peer is trusted, only the bootstrap call (Join) is
-		// allowed through. Everything else gets a clear error so the
-		// caller knows to re-run `qu node add`.
-		if !trusted && req.Method != MethodJoin {
-			_ = writeError(tlsConn, req.ID, "peer not trusted; run `qu node add` first")
+		// Until the peer is trusted, only bootstrap calls are allowed
+		// through: Enroll (the new pre-deployment-token flow) and
+		// legacy Join (kept around so an old node can still hit a new
+		// node's listener and get a graceful deprecation error).
+		// Everything else needs an existing trust relationship.
+		if !trusted && req.Method != MethodJoin && req.Method != MethodEnroll {
+			_ = writeError(tlsConn, req.ID, "peer not trusted; obtain an enrollment token via `qu enroll create` on the cluster")
 			continue
 		}
 
@@ -146,10 +148,11 @@ func (s *Server) handleConn(ctx context.Context, raw net.Conn) {
 			return
 		}
 
-		// A successful Join writes the caller into our trust store;
-		// re-check so subsequent calls on this same connection (or
-		// after reconnect) flow through normally.
-		if req.Method == MethodJoin && !trusted {
+		// A successful bootstrap call may have written the caller into
+		// our trust store (auto-approve enrollment, or the legacy
+		// Join path while it still works); re-check so subsequent
+		// calls on this same connection flow through normally.
+		if !trusted && (req.Method == MethodJoin || req.Method == MethodEnroll) {
 			trusted = s.peerTrusted(peerFP)
 		}
 	}

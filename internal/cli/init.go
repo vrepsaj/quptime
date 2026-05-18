@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +17,6 @@ func addInitCmd(root *cobra.Command) {
 	var advertise string
 	var bindAddr string
 	var bindPort int
-	var clusterSecret string
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -27,9 +24,11 @@ func addInitCmd(root *cobra.Command) {
 		Long: `Initialise a new qu node on this host: pick a UUID, generate an
 RSA keypair, write a default node.yaml, and prepare the trust store.
 
-Pass --secret on every subsequent node so they share the same
-cluster join secret. If --secret is omitted on the very first node, a
-random secret is generated and printed for the operator to copy.
+To join an existing cluster, use ` + "`qu enroll join <token>`" + ` on this
+host instead — that does the equivalent bootstrap AND submits the
+enrollment in one step, eliminating the shared-cluster-secret model.
+` + "`qu init`" + ` is now only for the very first node of a brand-new
+cluster (or for hosts you intend to use without joining yet).
 
 Every flag may also be supplied via its QUPTIME_* environment variable
 (see docs/configuration.md). Explicit flags win over env values, which
@@ -54,9 +53,6 @@ overwritten. Re-run only after wiping the data directory.`,
 			if cmd.Flags().Changed("advertise") {
 				n.Advertise = advertise
 			}
-			if cmd.Flags().Changed("secret") {
-				n.ClusterSecret = clusterSecret
-			}
 			if err := n.ApplyEnvOverrides(); err != nil {
 				return err
 			}
@@ -70,39 +66,33 @@ overwritten. Re-run only after wiping the data directory.`,
 				n.BindPort = bindPort
 			}
 
-			_, generated, err := bootstrapNode(n)
-			if err != nil {
+			if _, err := bootstrapNode(n); err != nil {
 				return err
 			}
-			printBootstrapResult(cmd.OutOrStdout(), n, generated)
+			printBootstrapResult(cmd.OutOrStdout(), n)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&advertise, "advertise", "", "address peers should use to reach this node (host:port)")
 	cmd.Flags().StringVar(&bindAddr, "bind", "0.0.0.0", "listen address for inter-node traffic")
 	cmd.Flags().IntVar(&bindPort, "port", 9901, "listen port for inter-node traffic")
-	cmd.Flags().StringVar(&clusterSecret, "secret", "", "shared cluster join secret (omit on the first node to auto-generate)")
 	root.AddCommand(cmd)
 }
 
 // bootstrapNode creates the data dir, writes node.yaml, generates the
 // keypair, and seeds cluster.yaml with this node as its own first
 // peer. cfg may arrive with any subset of fields populated; missing
-// NodeID and ClusterSecret are auto-generated, missing BindAddr /
-// BindPort get the compiled defaults.
+// NodeID is auto-generated, missing BindAddr / BindPort get the
+// compiled defaults.
 //
-// Returns the populated config (the same pointer that was passed in)
-// and a flag indicating whether ClusterSecret was generated here. The
-// flag exists so the caller can print the secret for the operator —
-// it must be copied to every follower node out-of-band.
-//
+// Returns the populated config (the same pointer that was passed in).
 // Caller is responsible for checking that node.yaml does not yet
 // exist; bootstrapNode itself will refuse to overwrite an existing
 // keypair (crypto.GenerateKeyPair errors out) but does not guard
 // against clobbering node.yaml.
-func bootstrapNode(cfg *config.NodeConfig) (*config.NodeConfig, bool, error) {
+func bootstrapNode(cfg *config.NodeConfig) (*config.NodeConfig, error) {
 	if err := config.EnsureDataDir(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if cfg.NodeID == "" {
 		cfg.NodeID = uuid.NewString()
@@ -113,20 +103,11 @@ func bootstrapNode(cfg *config.NodeConfig) (*config.NodeConfig, bool, error) {
 	if cfg.BindPort == 0 {
 		cfg.BindPort = 9901
 	}
-	generated := false
-	if cfg.ClusterSecret == "" {
-		s, err := generateSecret()
-		if err != nil {
-			return nil, false, fmt.Errorf("generate cluster secret: %w", err)
-		}
-		cfg.ClusterSecret = s
-		generated = true
-	}
 	if err := cfg.Save(); err != nil {
-		return nil, false, fmt.Errorf("save node.yaml: %w", err)
+		return nil, fmt.Errorf("save node.yaml: %w", err)
 	}
 	if _, err := crypto.GenerateKeyPair(cfg.NodeID); err != nil {
-		return nil, false, fmt.Errorf("generate keys: %w", err)
+		return nil, fmt.Errorf("generate keys: %w", err)
 	}
 
 	// Seed cluster.yaml with this node as its own first peer.
@@ -137,11 +118,11 @@ func bootstrapNode(cfg *config.NodeConfig) (*config.NodeConfig, bool, error) {
 	// leading to split-brain elections.
 	certPEM, err := crypto.LoadCertPEM()
 	if err != nil {
-		return nil, false, fmt.Errorf("load cert: %w", err)
+		return nil, fmt.Errorf("load cert: %w", err)
 	}
 	fp, err := crypto.FingerprintFromCertPEM(certPEM)
 	if err != nil {
-		return nil, false, fmt.Errorf("fingerprint own cert: %w", err)
+		return nil, fmt.Errorf("fingerprint own cert: %w", err)
 	}
 	cluster := &config.ClusterConfig{}
 	if err := cluster.Mutate(cfg.NodeID, func(c *config.ClusterConfig) error {
@@ -153,33 +134,15 @@ func bootstrapNode(cfg *config.NodeConfig) (*config.NodeConfig, bool, error) {
 		}}
 		return nil
 	}); err != nil {
-		return nil, false, fmt.Errorf("seed cluster.yaml: %w", err)
+		return nil, fmt.Errorf("seed cluster.yaml: %w", err)
 	}
-	return cfg, generated, nil
+	return cfg, nil
 }
 
 // printBootstrapResult emits the human-readable summary both `qu init`
-// and the serve auto-init path print after bootstrapping. Kept in one
-// place so the secret-disclosure format stays identical across the two
-// entry points.
-func printBootstrapResult(out io.Writer, n *config.NodeConfig, secretGenerated bool) {
+// and the serve auto-init path print after bootstrapping.
+func printBootstrapResult(out io.Writer, n *config.NodeConfig) {
 	fmt.Fprintf(out, "initialised node %s\n", n.NodeID)
 	fmt.Fprintf(out, "data dir: %s\n", config.DataDir())
 	fmt.Fprintf(out, "advertise: %s\n", n.AdvertiseAddr())
-	if secretGenerated {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, "cluster secret (copy to every other node via --secret or QUPTIME_CLUSTER_SECRET):")
-		fmt.Fprintln(out, "  "+n.ClusterSecret)
-	}
-}
-
-// generateSecret produces 32 bytes of crypto-random data and returns
-// it base64-encoded. Long enough that brute force isn't a concern;
-// short enough that operators can copy-paste it without pagination.
-func generateSecret() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }

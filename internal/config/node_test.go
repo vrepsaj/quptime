@@ -62,6 +62,8 @@ func TestApplyEnvOverrides(t *testing.T) {
 	t.Setenv(EnvBindAddr, "1.2.3.4")
 	t.Setenv(EnvBindPort, "9999")
 	t.Setenv(EnvAdvertise, "public.example.com:9999")
+	// QUPTIME_CLUSTER_SECRET is intentionally ignored post-enrollment
+	// rework; setting it must NOT touch the field below.
 	t.Setenv(EnvClusterSecret, "shh-secret")
 
 	n := &NodeConfig{
@@ -79,7 +81,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 		BindAddr:      "1.2.3.4",
 		BindPort:      9999,
 		Advertise:     "public.example.com:9999",
-		ClusterSecret: "shh-secret",
+		ClusterSecret: "old-secret", // env override no longer applies
 	}
 	if *n != want {
 		t.Errorf("got %+v want %+v", *n, want)

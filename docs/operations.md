@@ -60,8 +60,8 @@ Three files matter, in descending order of "pain if lost":
 
 | File                   | Why back it up                                                       |
 | ---------------------- | -------------------------------------------------------------------- |
-| `node.yaml`            | Holds the cluster secret. Lose it and the node can't rejoin.         |
-| `keys/private.pem`     | Lose it and you must `qu init` a fresh identity and re-trust.        |
+| `keys/private.pem`     | The node's identity. Lose it and you must re-enroll the host (`qu enroll join`) and rebuild its trust entries cluster-wide. |
+| `node.yaml`            | Stable NodeID and advertise. Recoverable, but losing it means the host comes back with a new NodeID. |
 | `cluster.yaml`         | Resyncs from any other live peer, so per-node backup is optional.    |
 
 ### Per-host backup
@@ -118,21 +118,22 @@ same role.
    This drops it from `cluster.yaml` and removes its trust entry. The
    live set's size shrinks by one — verify quorum still holds.
 
-2. On the new host, install `qu` and `qu init` against the existing
-   cluster secret:
+2. On any surviving node, mint a pre-deployment enrollment token:
 
    ```sh
-   sudo -u quptime qu init \
-     --advertise delta.example.com:9901 \
-     --secret '<existing cluster secret>'
+   sudo -u quptime qu enroll create --name delta --auto-approve --ttl 1h
+   ```
+
+3. On the new host, install `qu` then redeem the token:
+
+   ```sh
+   sudo -u quptime qu enroll join <token> --advertise delta.example.com:9901
    sudo systemctl start quptime
    ```
 
-3. From a surviving node, invite the new one:
-
-   ```sh
-   sudo -u quptime qu node add delta.example.com:9901
-   ```
+   With `--auto-approve` on the create step, the host is a full peer
+   the moment the enrollment RPC succeeds. Without it, run
+   `qu enroll approve <id>` on a surviving node first.
 
 The dead node's checks and alerts are unaffected — they live in the
 replicated `cluster.yaml`, not the dead node's identity.
@@ -222,5 +223,6 @@ After standing up a new cluster, work through:
 - [ ] Backups of `node.yaml` + `keys/` + `cluster.yaml` are landing in
       your backup destination.
 - [ ] Firewall allow-list (if any) lists every peer's IP.
-- [ ] You've stored the cluster secret somewhere that survives the
-      first operator leaving.
+- [ ] You have a documented runbook for adding a new node (mint token
+      with `qu enroll create`; redeem with `qu enroll join`) that
+      survives the first operator leaving.

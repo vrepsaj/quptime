@@ -68,6 +68,18 @@ func New(logger *log.Logger) (*Daemon, error) {
 	if node.NodeID == "" {
 		return nil, errors.New("node.yaml has empty node_id — run `qu init` first")
 	}
+	// Upgrade path: a node.yaml from before the enrollment-token rework
+	// will still carry the now-unused cluster_secret field. Blank it
+	// out and rewrite so it stops sitting on disk as a tempting target.
+	// Trust between existing peers is unaffected (it lives in trust.yaml
+	// + the cert material replicated through cluster.yaml).
+	if node.ClusterSecret != "" {
+		logger.Printf("node.yaml: clearing legacy cluster_secret field (enrollment tokens replace it)")
+		node.ClusterSecret = ""
+		if err := node.Save(); err != nil {
+			return nil, fmt.Errorf("rewrite node.yaml without cluster_secret: %w", err)
+		}
+	}
 
 	cluster, err := config.LoadClusterConfig()
 	if err != nil {

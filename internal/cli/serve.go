@@ -74,10 +74,9 @@ func autoInitIfNeeded(cmd *cobra.Command, logger *log.Logger) error {
 	if err := n.ApplyEnvOverrides(); err != nil {
 		return err
 	}
-	if _, generated, err := bootstrapNode(n); err != nil {
+	if _, err := bootstrapNode(n); err != nil {
 		return fmt.Errorf("auto-init: %w", err)
-	} else {
-		printBootstrapResult(cmd.OutOrStderr(), n, generated)
 	}
+	printBootstrapResult(cmd.OutOrStderr(), n)
 	return nil
 }

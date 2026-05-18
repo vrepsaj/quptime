@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -23,16 +21,14 @@ func addNodeCmd(root *cobra.Command) {
 	}
 
 	add := &cobra.Command{
-		Use:   "add <host:port>",
-		Short: "Trust-on-first-use add a peer to this cluster",
-		Args:  cobra.ExactArgs(1),
+		Use:        "add <host:port>",
+		Short:      "(removed) Use `qu enroll create` + `qu enroll join` to add a peer",
+		Deprecated: "the cluster-secret join model has been replaced by pre-deployment enrollment tokens. On the cluster, run `qu enroll create [--auto-approve]`; copy the printed command and run it on the new host.",
+		Args:       cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
-			defer cancel()
-			return runNodeAdd(ctx, cmd, args[0])
+			return fmt.Errorf("`qu node add` has been removed — generate a token with `qu enroll create` and redeem it on the new host with `qu enroll join <token>`")
 		},
 	}
-	add.Flags().BoolP("yes", "y", false, "skip interactive confirmation")
 	node.AddCommand(add)
 
 	list := &cobra.Command{
@@ -136,42 +132,4 @@ those, remove the node and add it again (which re-performs TOFU).`,
 	}
 	cmd.Flags().String("address", "", "new host:port advertise address")
 	return cmd
-}
-
-// runNodeAdd does a two-step TOFU: probe peer, confirm fingerprint
-// interactively, then issue the actual add.
-func runNodeAdd(ctx context.Context, cmd *cobra.Command, addr string) error {
-	probeBody := daemon.NodeProbeBody{Address: addr}
-	raw, err := callDaemon(ctx, daemon.CtrlNodeProbe, probeBody)
-	if err != nil {
-		return fmt.Errorf("probe %s: %w", addr, err)
-	}
-	var probe daemon.NodeProbeResult
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "remote node id : %s\n", probe.NodeID)
-	fmt.Fprintf(cmd.OutOrStdout(), "fingerprint    : %s\n", probe.Fingerprint)
-
-	yes, _ := cmd.Flags().GetBool("yes")
-	if !yes {
-		fmt.Fprint(cmd.OutOrStdout(), "trust this peer? [y/N] ")
-		ans, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		ans = strings.ToLower(strings.TrimSpace(ans))
-		if ans != "y" && ans != "yes" {
-			return fmt.Errorf("aborted")
-		}
-	}
-
-	addBody := daemon.NodeAddBody{Address: addr, Fingerprint: probe.Fingerprint}
-	raw, err = callDaemon(ctx, daemon.CtrlNodeAdd, addBody)
-	if err != nil {
-		return err
-	}
-	var res daemon.NodeAddResult
-	if err := json.Unmarshal(raw, &res); err != nil {
-		return err
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "added node %s (cluster version now %d)\n", res.NodeID, res.Version)
-	return nil
 }

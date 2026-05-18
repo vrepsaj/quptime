@@ -132,26 +132,38 @@ sudo systemctl enable quptime.service
 
 ## Initialise the node
 
-**Don't start the service yet** — `qu init` must run first, and it
-must run as the `quptime` user so it creates files with the right
-ownership.
+**Don't start the service yet** — local identity must exist on disk
+first, and it must be created as the `quptime` user so the files
+have the right ownership.
 
-On the **first** host (it will print a secret; copy it):
+On the **first** host of a brand-new cluster:
 
 ```sh
 sudo -u quptime QUPTIME_DIR=/etc/quptime \
   qu init --advertise alpha.example.com:9901
+sudo systemctl start quptime
 ```
 
-On every **other** host (paste the secret):
+For every **other** host, mint a pre-deployment enrollment token on
+`alpha` (or any existing peer) and redeem it on the new host:
 
 ```sh
-sudo -u quptime QUPTIME_DIR=/etc/quptime \
-  qu init --advertise bravo.example.com:9901 --secret '<paste>'
+# On alpha:
+sudo -u quptime qu enroll create --name bravo --auto-approve --ttl 1h
+# → copy the printed `qu enroll join <token>` command.
 
+# On bravo:
 sudo -u quptime QUPTIME_DIR=/etc/quptime \
-  qu init --advertise charlie.example.com:9901 --secret '<paste>'
+  qu enroll join <paste> --advertise bravo.example.com:9901
+sudo systemctl start quptime
 ```
+
+`qu enroll join` does the equivalent of `qu init` (NodeID +
+keypair + cert) and submits the enrollment in one step. With
+`--auto-approve` on the create side, the new host is a full peer the
+moment the enrollment RPC returns. Drop `--auto-approve` for an
+interactive flow that requires `qu enroll approve <id>` on the
+cluster side first — see [security.md](../security.md).
 
 ## Open the firewall
 

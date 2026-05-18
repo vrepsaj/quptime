@@ -5,6 +5,21 @@ The published image is a 14 MB distroless static container with the
 daemon can bind privileged ports and open ICMP sockets; override with
 `--user` if your host doesn't need that.
 
+> **Note on cluster joining.** The shared-cluster-secret model
+> referenced in some snippets below has been replaced by pre-deployment
+> enrollment tokens. Where this page shows `QUPTIME_CLUSTER_SECRET` or
+> scraping a secret from logs, the modern flow is:
+>
+> 1. On any existing cluster node: `qu enroll create --auto-approve` →
+>    copy the printed `qu enroll join <token>` command.
+> 2. On the new container's host (with the data volume mounted):
+>    `docker exec quptime qu enroll join <token> --advertise <addr>`.
+>
+> The `QUPTIME_CLUSTER_SECRET` env var is silently ignored by recent
+> daemons; the daemon also clears any `cluster_secret` field it finds
+> in an existing `node.yaml` on first start. See
+> [../security.md](../security.md) for the threat model.
+
 ## Image references
 
 The same multi-arch (amd64 + arm64) image is published to two

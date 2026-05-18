@@ -22,8 +22,8 @@ pages here go deeper and are organised by what you're trying to do.
 - [Operations](operations.md) — day-2 tasks: upgrades, backups,
   recovery from a lost node, recovery from a lost quorum, monitoring
   `qu` itself.
-- [Security](security.md) — the mTLS / TOFU trust model, what the
-  cluster secret protects, how to rotate keys, what to put on a public
+- [Security](security.md) — the mTLS trust model, how pre-deployment
+  enrollment tokens work, how to rotate keys, what to put on a public
   network and what not to.
 - [Troubleshooting](troubleshooting.md) — common failure modes with
   the log lines you'll see and the fix.

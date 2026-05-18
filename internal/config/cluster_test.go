@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestQuorumSize(t *testing.T) {
@@ -103,5 +104,68 @@ func TestFindAlert(t *testing.T) {
 	}
 	if a := c.FindAlert("ghost"); a != nil {
 		t.Errorf("expected nil for missing, got %+v", a)
+	}
+}
+
+// TestPendingEnrollmentRoundtrip ensures the new field survives the
+// YAML Save/Load cycle including the optional PendingJoin pointer.
+func TestPendingEnrollmentRoundtrip(t *testing.T) {
+	t.Setenv("QUPTIME_DIR", t.TempDir())
+	c := &ClusterConfig{}
+	err := c.Mutate("self", func(cc *ClusterConfig) error {
+		cc.PendingEnrollments = []PendingEnrollment{
+			{
+				ID:          "tok-1",
+				Name:        "bravo",
+				SecretHash:  "sha256:abc",
+				AutoApprove: true,
+				CreatedBy:   "self",
+				CreatedAt:   time.Now().UTC().Truncate(time.Second),
+				ExpiresAt:   time.Now().Add(time.Hour).UTC().Truncate(time.Second),
+				PendingJoin: &PendingJoin{
+					NodeID:      "joiner",
+					Advertise:   "joiner:9901",
+					Fingerprint: "sha256:def",
+					CertPEM:     "PEM",
+					SubmittedAt: time.Now().UTC().Truncate(time.Second),
+				},
+			},
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadClusterConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(loaded.PendingEnrollments); got != 1 {
+		t.Fatalf("after reload: enrollments=%d want 1", got)
+	}
+	e := loaded.PendingEnrollments[0]
+	if e.ID != "tok-1" || e.Name != "bravo" || !e.AutoApprove {
+		t.Errorf("header fields lost: %+v", e)
+	}
+	if e.PendingJoin == nil || e.PendingJoin.NodeID != "joiner" {
+		t.Errorf("pending join lost: %+v", e.PendingJoin)
+	}
+}
+
+// TestFindEnrollmentByIDIsCaseSensitive verifies the lookup is exact
+// (operators occasionally typo a name; we don't want a near-match to
+// validate the wrong token).
+func TestFindEnrollmentByIDIsCaseSensitive(t *testing.T) {
+	c := &ClusterConfig{
+		PendingEnrollments: []PendingEnrollment{
+			{ID: "abcDEF", SecretHash: "sha256:x"},
+		},
+	}
+	if got := c.FindEnrollmentByID("abcDEF"); got == nil {
+		t.Error("exact match missed")
+	}
+	if got := c.FindEnrollmentByID("abcdef"); got != nil {
+		t.Error("case-insensitive match accepted")
 	}
 }

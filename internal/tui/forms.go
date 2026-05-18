@@ -369,10 +369,22 @@ func newAddCheckForm(checkType config.CheckType) *form {
 		textField("Timeout", "e.g. 10s", false),
 		textField("Alerts", "comma-separated alert IDs/names (optional)", false),
 	}
-	if checkType == config.CheckHTTP {
+	switch checkType {
+	case config.CheckHTTP:
 		fields = append(fields,
 			textField("Expect status", "e.g. 200 (HTTP only)", false),
 			textField("Body match", "substring required (HTTP only)", false),
+		)
+	case config.CheckTLS:
+		fields = append(fields,
+			textField("Warn days", "fail when cert expires within N days (default 14)", false),
+			textField("SNI", "override server name; blank = host from target", false),
+		)
+	case config.CheckDNS:
+		fields = append(fields,
+			textField("Record", "a | aaaa | cname | mx | txt | ns (default a)", false),
+			textField("Resolver", "host:port; blank = system resolver", false),
+			textField("Expect", "substring required in an answer (optional)", false),
 		)
 	}
 	return newForm("Add "+strings.ToUpper(string(checkType))+" check", fields, func(vals []string) tea.Cmd {
@@ -393,9 +405,17 @@ func newAddCheckForm(checkType config.CheckType) *form {
 					}
 				}
 			}
-			if checkType == config.CheckHTTP {
+			switch checkType {
+			case config.CheckHTTP:
 				ch.ExpectStatus = atoiOr(vals[5], 200)
 				ch.BodyMatch = strings.TrimSpace(vals[6])
+			case config.CheckTLS:
+				ch.TLSWarnDays = atoiOr(vals[5], 14)
+				ch.TLSServerName = strings.TrimSpace(vals[6])
+			case config.CheckDNS:
+				ch.DNSRecord = strings.ToLower(strings.TrimSpace(vals[5]))
+				ch.DNSResolver = strings.TrimSpace(vals[6])
+				ch.DNSExpect = strings.TrimSpace(vals[7])
 			}
 			if err := mutateAdd(transport.MutationAddCheck, ch); err != nil {
 				return formSubmitErr(err.Error())
@@ -473,37 +493,66 @@ func newAddSMTPForm() *form {
 	})
 }
 
+// newAddNodeForm mints a fresh pre-deployment enrollment token via
+// the daemon and exposes the resulting ID through the flash bar. The
+// operator runs `qu enroll list` (or watches the cluster.yaml diff)
+// to retrieve the full base64 token — it is too long to display
+// comfortably in the TUI's single-line flash, so we just confirm
+// creation and point them at the CLI for the token string itself.
 func newAddNodeForm() *form {
 	fields := []formField{
-		textField("Address", "host:9901 of the peer to invite", true),
+		textField("Name", "optional label for this token (e.g. host name)", false),
+		textField("TTL", "how long the token is valid (default 1h)", false),
+		textField("Auto-approve", "y to skip cluster-side approval, blank for manual", false),
 	}
-	return newForm("Add node (TOFU)", fields, func(vals []string) tea.Cmd {
+	return newForm("Add peer (enrollment token)", fields, func(vals []string) tea.Cmd {
 		return func() tea.Msg {
-			addr := strings.TrimSpace(vals[0])
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			name := strings.TrimSpace(vals[0])
+			ttl := 1 * time.Hour
+			if raw := strings.TrimSpace(vals[1]); raw != "" {
+				parsed, err := time.ParseDuration(raw)
+				if err != nil {
+					return formSubmitErr(fmt.Sprintf("ttl: %v", err))
+				}
+				ttl = parsed
+			}
+			auto := false
+			switch strings.ToLower(strings.TrimSpace(vals[2])) {
+			case "", "n", "no", "false":
+				auto = false
+			case "y", "yes", "true":
+				auto = true
+			default:
+				return formSubmitErr("auto-approve must be y/n")
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			raw, err := callDaemon(ctx, daemon.CtrlNodeProbe, daemon.NodeProbeBody{Address: addr})
-			if err != nil {
-				return formSubmitErr(fmt.Sprintf("probe: %v", err))
-			}
-			var probe daemon.NodeProbeResult
-			if err := json.Unmarshal(raw, &probe); err != nil {
-				return formSubmitErr(err.Error())
-			}
-			// auto-accept the fingerprint we just observed. The cluster
-			// secret check on the remote side already prevents random
-			// hosts from being trusted.
-			raw, err = callDaemon(ctx, daemon.CtrlNodeAdd, daemon.NodeAddBody{
-				Address:     addr,
-				Fingerprint: probe.Fingerprint,
+			raw, err := callDaemon(ctx, daemon.CtrlEnrollCreate, daemon.EnrollCreateBody{
+				Name:        name,
+				TTL:         ttl,
+				AutoApprove: auto,
 			})
 			if err != nil {
-				return formSubmitErr(fmt.Sprintf("add: %v", err))
+				return formSubmitErr(err.Error())
 			}
-			var res daemon.NodeAddResult
-			_ = json.Unmarshal(raw, &res)
+			var res daemon.EnrollCreateResult
+			if err := json.Unmarshal(raw, &res); err != nil {
+				return formSubmitErr(err.Error())
+			}
+			approval := "manual"
+			if res.AutoApprove {
+				approval = "auto"
+			}
+			// The token is the long base64 string the joiner runs. It
+			// is only available at create time (cluster.yaml stores
+			// just the hash), so we surface the full command in the
+			// flash — wrapping is fine, the user copies the whole
+			// line. They can always revoke with `qu enroll revoke
+			// <id>` if they typoed something.
 			return modalDone{
-				flash: fmt.Sprintf("added node %s — cluster version %d", res.NodeID, res.Version),
+				flash: fmt.Sprintf("token %s created (%s, expires in %s). run on the new host:\n  qu enroll join %s",
+					res.ID, approval, time.Until(res.ExpiresAt).Round(time.Second), res.Token),
 				level: flashInfo,
 			}
 		}
@@ -530,6 +579,10 @@ func newEditCheckForm(existing config.Check) *form {
 	if existing.ExpectStatus > 0 {
 		expectStr = fmt.Sprintf("%d", existing.ExpectStatus)
 	}
+	warnDaysStr := ""
+	if existing.TLSWarnDays > 0 {
+		warnDaysStr = fmt.Sprintf("%d", existing.TLSWarnDays)
+	}
 
 	fields := []formField{
 		textFieldWithValue("Name", "human-friendly identifier", existing.Name, true),
@@ -538,10 +591,22 @@ func newEditCheckForm(existing config.Check) *form {
 		textFieldWithValue("Timeout", "e.g. 10s", timeoutStr, false),
 		textFieldWithValue("Alerts", "comma-separated alert IDs/names (optional)", strings.Join(existing.AlertIDs, ","), false),
 	}
-	if existing.Type == config.CheckHTTP {
+	switch existing.Type {
+	case config.CheckHTTP:
 		fields = append(fields,
 			textFieldWithValue("Expect status", "e.g. 200 (HTTP only)", expectStr, false),
 			textFieldWithValue("Body match", "substring required (HTTP only)", existing.BodyMatch, false),
+		)
+	case config.CheckTLS:
+		fields = append(fields,
+			textFieldWithValue("Warn days", "fail when cert expires within N days (default 14)", warnDaysStr, false),
+			textFieldWithValue("SNI", "override server name; blank = host from target", existing.TLSServerName, false),
+		)
+	case config.CheckDNS:
+		fields = append(fields,
+			textFieldWithValue("Record", "a | aaaa | cname | mx | txt | ns (default a)", existing.DNSRecord, false),
+			textFieldWithValue("Resolver", "host:port; blank = system resolver", existing.DNSResolver, false),
+			textFieldWithValue("Expect", "substring required in an answer (optional)", existing.DNSExpect, false),
 		)
 	}
 	checkType := existing.Type
@@ -566,9 +631,17 @@ func newEditCheckForm(existing config.Check) *form {
 					}
 				}
 			}
-			if checkType == config.CheckHTTP {
+			switch checkType {
+			case config.CheckHTTP:
 				ch.ExpectStatus = atoiOr(vals[5], 200)
 				ch.BodyMatch = strings.TrimSpace(vals[6])
+			case config.CheckTLS:
+				ch.TLSWarnDays = atoiOr(vals[5], 14)
+				ch.TLSServerName = strings.TrimSpace(vals[6])
+			case config.CheckDNS:
+				ch.DNSRecord = strings.ToLower(strings.TrimSpace(vals[5]))
+				ch.DNSResolver = strings.TrimSpace(vals[6])
+				ch.DNSExpect = strings.TrimSpace(vals[7])
 			}
 			if err := mutateAdd(transport.MutationAddCheck, ch); err != nil {
 				return formSubmitErr(err.Error())
@@ -877,6 +950,10 @@ func targetHint(t config.CheckType) string {
 		return "db.internal:5432"
 	case config.CheckICMP:
 		return "10.0.0.1"
+	case config.CheckTLS:
+		return "example.com[:443] or https://example.com"
+	case config.CheckDNS:
+		return "example.com"
 	}
 	return ""
 }

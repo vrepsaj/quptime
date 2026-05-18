@@ -298,32 +298,38 @@ Installation complete.
 
 Next steps:
 
-  1. Initialise the node identity. Either:
+  1. Initialise the node identity. IMPORTANT: run as the ${SERVICE_USER}
+     user, not root — otherwise node.yaml lands owned by root and the
+     service can't read it on start.
 
-       a) Let \`qu serve\` auto-init from environment variables.
-          Drop a systemd override like:
+       FIRST node of a brand-new cluster:
 
-            sudo systemctl edit ${SERVICE_NAME}
-              [Service]
-              Environment=QUPTIME_ADVERTISE=<this-host>:9901
-              # On follower nodes, also set the shared join secret:
-              # Environment=QUPTIME_CLUSTER_SECRET=<paste from first node>
+         sudo -u ${SERVICE_USER} QUPTIME_DIR=${DATA_DIR} \\
+           qu init --advertise <this-host>:9901
+         sudo systemctl start ${SERVICE_NAME}
 
-       b) Or run \`qu init\` once explicitly. IMPORTANT: run as the
-          ${SERVICE_USER} user, not root — otherwise node.yaml lands
-          owned by root and the service can't read it on start.
+       JOINING an existing cluster — on any existing peer, mint a
+       pre-deployment token:
 
-            sudo -u ${SERVICE_USER} QUPTIME_DIR=${DATA_DIR} \\
-              qu init --advertise <this-host>:9901
+         sudo -u ${SERVICE_USER} qu enroll create --name <this-host> --auto-approve
 
-          If you already ran it as root and the service is failing
-          with "permission denied" on node.yaml, repair with:
+       …then on THIS host, redeem it:
 
-            sudo chown -R ${SERVICE_USER}:${SERVICE_GROUP} ${DATA_DIR}
+         sudo -u ${SERVICE_USER} QUPTIME_DIR=${DATA_DIR} \\
+           qu enroll join <token> --advertise <this-host>:9901
+         sudo systemctl start ${SERVICE_NAME}
 
-  2. Start the service:
+     (\`qu enroll join\` does the equivalent of \`qu init\` and submits
+     enrollment in one step. See docs/security.md for the threat
+     model.)
 
-       sudo systemctl start ${SERVICE_NAME}
+     If you already ran something as root and the service is failing
+     with "permission denied" on node.yaml, repair with:
+
+         sudo chown -R ${SERVICE_USER}:${SERVICE_GROUP} ${DATA_DIR}
+
+  2. Verify it's running:
+
        sudo -u ${SERVICE_USER} qu status
 
   3. For ICMP checks, the daemon defaults to unprivileged UDP-mode

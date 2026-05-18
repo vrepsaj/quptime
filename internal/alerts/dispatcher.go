@@ -3,6 +3,8 @@ package alerts
 import (
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	"git.cer.sh/axodouble/quptime/internal/checks"
 	"git.cer.sh/axodouble/quptime/internal/config"
@@ -44,6 +46,132 @@ func (d *Dispatcher) OnTransition(check *config.Check, from, to checks.State, sn
 			d.logger.Printf("alerts: %q via %s: %v", alert.Name, alert.Type, err)
 		}
 	}
+}
+
+// TestCheck fires a synthetic transition for a real check through
+// every alert that would actually receive it (Default + check.AlertIDs
+// minus SuppressAlertIDs), so an operator can validate end-to-end
+// message formatting — including type-specific Detail rendering and
+// any custom templates — without waiting for a real outage. The
+// hysteresis-gated `shouldAlert` filter is intentionally bypassed
+// here: this is the operator explicitly asking for the message.
+//
+// state controls the synthetic transition shape:
+//   - "down"      → from=Up,      to=Down   (verb=DOWN)
+//   - "recovered" → from=Down,    to=Up     (verb=RECOVERED)
+//   - "up"        → from=Unknown, to=Up     (verb=UP)
+//
+// The synthetic Snapshot reports N OK/Fail matching the configured
+// nodes (best-effort — falls back to 3 if the cluster is empty),
+// and Detail is a type-aware placeholder so cert-expiry / DNS / HTTP
+// templates render something that looks like a real failure.
+func (d *Dispatcher) TestCheck(checkID, state string) error {
+	snap := d.cluster.Snapshot()
+	var check *config.Check
+	for i := range snap.Checks {
+		if snap.Checks[i].ID == checkID || snap.Checks[i].Name == checkID {
+			cp := snap.Checks[i]
+			check = &cp
+			break
+		}
+	}
+	if check == nil {
+		return fmt.Errorf("check %q not found", checkID)
+	}
+
+	from, to, err := parseTestState(state)
+	if err != nil {
+		return err
+	}
+
+	nodes := len(snap.Peers)
+	if nodes == 0 {
+		nodes = 3
+	}
+	ss := syntheticSnapshot(check, to, nodes)
+
+	alerts := d.cluster.EffectiveAlertsFor(check)
+	if len(alerts) == 0 {
+		return fmt.Errorf("check %q has no effective alerts (nothing to fire)", check.Name)
+	}
+
+	var errs []string
+	for i := range alerts {
+		alert := alerts[i]
+		msg, rerr := RenderFor(&alert, d.selfID, check, from, to, ss)
+		if rerr != nil {
+			d.logger.Printf("alerts: %q template: %v — falling back to default", alert.Name, rerr)
+		}
+		if derr := d.dispatchOne(&alert, msg); derr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", alert.Name, derr))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d/%d alerts failed: %s", len(errs), len(alerts), strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// parseTestState normalises the operator-supplied transition keyword
+// into a from/to pair. Empty / unknown values default to a DOWN test
+// (the most useful one when validating a brand-new alert template).
+func parseTestState(state string) (checks.State, checks.State, error) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "", "down":
+		return checks.StateUp, checks.StateDown, nil
+	case "recovered":
+		return checks.StateDown, checks.StateUp, nil
+	case "up":
+		return checks.StateUnknown, checks.StateUp, nil
+	default:
+		return "", "", fmt.Errorf("unknown test state %q (want down|up|recovered)", state)
+	}
+}
+
+// syntheticSnapshot builds a plausible aggregate snapshot for a test
+// transition. Down → all nodes report failure with a type-specific
+// detail string; Up → all nodes report OK with no detail.
+func syntheticSnapshot(check *config.Check, to checks.State, nodes int) checks.Snapshot {
+	if nodes < 1 {
+		nodes = 1
+	}
+	if to == checks.StateDown {
+		return checks.Snapshot{
+			CheckID: check.ID,
+			State:   to,
+			Reports: nodes,
+			OKCount: 0,
+			NotOK:   nodes,
+			Detail:  syntheticDetail(check),
+		}
+	}
+	return checks.Snapshot{
+		CheckID: check.ID,
+		State:   to,
+		Reports: nodes,
+		OKCount: nodes,
+		NotOK:   0,
+	}
+}
+
+// syntheticDetail returns a plausible-looking failure message for
+// each check type so an operator testing their templates sees
+// something representative of a real outage. The "[test]" prefix
+// keeps it honest — nobody is fooled into thinking this is real.
+func syntheticDetail(check *config.Check) string {
+	switch check.Type {
+	case config.CheckHTTP:
+		return "[test] status 503 Service Unavailable"
+	case config.CheckTCP:
+		return "[test] dial tcp: i/o timeout"
+	case config.CheckICMP:
+		return "[test] no reply"
+	case config.CheckTLS:
+		return "[test] cert expires in 7d (notAfter=" + time.Now().Add(7*24*time.Hour).UTC().Format(time.RFC3339) + ")"
+	case config.CheckDNS:
+		return "[test] lookup " + check.Target + ": no such host"
+	}
+	return "[test] synthetic failure"
 }
 
 // Test sends a one-shot test message to the named alert. Returns an

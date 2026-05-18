@@ -8,9 +8,13 @@ The trust model in one page. Read this before deciding where to put
 - **Eavesdropping on cluster traffic.** Defended: TLS 1.3 only,
   fingerprint-pinned per peer.
 - **MITM on the cluster's inter-node link.** Defended: TLS 1.3 with
-  out-of-band fingerprint verification at `qu node add`.
+  fingerprints pinned during pre-deployment enrollment (the joiner
+  receives the cluster's fingerprint inside the enrollment token, not
+  out of band).
 - **A random internet host enrolling itself as a peer.** Defended:
-  pre-shared cluster secret on every `Join`.
+  enrollment requires a single-use pre-deployment token whose secret
+  is stored hashed in cluster.yaml. No shared cluster-wide secret to
+  leak.
 - **A compromised peer issuing forged cluster-config mutations.** Not
   defended. A peer trusted enough to be in `cluster.yaml.peers` can
   propose mutations through the master. Treat membership as a
@@ -24,21 +28,47 @@ The trust model in one page. Read this before deciding where to put
   layer. The TLS stack accepts anyone's handshake; rate-limiting belongs
   at the firewall — see [public-internet.md](deployment/public-internet.md).
 
-## The three secrets on disk
+## The secrets on disk
 
-| Secret                     | What it is                                | Loss impact                                  |
-| -------------------------- | ----------------------------------------- | -------------------------------------------- |
-| `keys/private.pem`         | RSA private key, this node's identity.    | Anyone with it can impersonate this node.    |
-| `node.yaml.cluster_secret` | Pre-shared base64 string.                 | Anyone with it can `Join` the cluster.       |
-| `trust.yaml.entries[].cert_pem` | Other peers' public certs (not secrets, but they enable mTLS). | Loss only forces re-trust. |
+| Secret                           | What it is                                | Loss impact                                  |
+| -------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| `keys/private.pem`               | RSA private key, this node's identity.    | Anyone with it can impersonate this node.    |
+| Outstanding enrollment tokens    | Sent by hand to the joiner; valid until TTL or use. | A leaked token can enroll one extra node before it expires; revoke with `qu enroll revoke`. |
+| `trust.yaml.entries[].cert_pem`  | Other peers' public certs (not secrets, but they enable mTLS). | Loss only forces re-trust. |
 
-The first two are real secrets and live under `0600` permissions in
-the data directory. Back them up; never commit them; never paste them
-in chat.
+`keys/private.pem` is the only real long-lived secret and lives under
+`0600` permissions in the data directory. Back it up; never commit it;
+never paste it in chat. Enrollment tokens are short-lived bearer
+secrets — treat them like one-time passwords.
+
+Cluster.yaml stores only the **sha256 hash** of each enrollment
+secret. An operator who can read cluster.yaml cannot replay a token.
+
+## Why no shared cluster secret
+
+Earlier versions had a single `cluster_secret` in `node.yaml` and any
+host with that string could call `Join` and become a peer. That was
+one secret per cluster, never rotated automatically, and copied by
+hand to every new host — a textbook single point of compromise.
+
+It's gone. New nodes enrol with pre-deployment tokens
+([architecture.md](architecture.md) §enrollment). Each token is:
+
+- **Single-use** (consumed on successful submission or operator approval).
+- **Time-bound** (default TTL 1h; configurable via `--ttl`).
+- **Bound to one cluster** (the token embeds the cluster's leaf-cert
+  fingerprints, so a stolen token cannot be redirected to a different
+  cluster the attacker controls).
+- **Stored hashed** on disk; even reading cluster.yaml does not
+  recover the secret.
+
+If you find a `cluster_secret` field still sitting in your
+`node.yaml`, the daemon will blank it on next start with a log line —
+the field is no longer consulted.
 
 ## TLS handshake step by step
 
-For every inter-node call:
+For every inter-node call once enrollment has completed:
 
 1. Caller dials peer on its `advertise` address.
 2. TLS 1.3 handshake. Both sides present their self-signed leaf cert.
@@ -52,10 +82,7 @@ For every inter-node call:
    `InsecureSkipVerify: true`) because trust is enforced one layer up.
 5. The RPC dispatcher reads the client's cert, computes its
    fingerprint, and looks it up in the server's `trust.yaml`. If no
-   entry exists, only the `Join` method is permitted.
-6. `Join` performs a constant-time comparison of the inbound
-   `ClusterSecret` against `node.yaml.cluster_secret`. Mismatch →
-   refusal.
+   entry exists, only the `Enroll` method is permitted.
 
 So:
 
@@ -64,37 +91,73 @@ So:
 - An adversary who gets your **private key** *can* impersonate you to
   any peer that trusts your fingerprint.
 
-## The TOFU step
+## Enrollment step by step
 
-`qu node add <host:port>` runs a one-shot insecure dial against the
-target (the only place `InsecureBootstrapConfig` is used in the
-codebase, see `internal/transport/tls.go:91`). It fetches the
-remote's cert, prints the fingerprint, and asks for confirmation.
+Replaces the old TOFU + cluster-secret bootstrap.
 
-This is **identical** to SSH's first-connection prompt. The operator
-must verify the fingerprint out of band — by running `qu status` on
-the remote side, or by reading `keys/cert.pem` directly, or via a
-known-good distribution channel.
+1. On any existing cluster node, operator runs:
+   ```sh
+   qu enroll create --name bravo --ttl 1h
+   ```
+2. The daemon mints a random 32-byte secret, stores its sha256 hash
+   in `cluster.yaml.pending_enrollments`, and prints a token. The
+   token is `base64(json)` and contains: the public token ID, the raw
+   secret, the cluster's contact endpoints with their pinned TLS
+   fingerprints, and the expiry timestamp.
+3. The operator copies the token to the new host (out of band — Slack
+   DM, an Ansible vault, a wormhole, whatever).
+4. On the new host:
+   ```sh
+   qu enroll join <token> --advertise bravo.example.com:9901
+   ```
+   This generates local identity (NodeID, RSA keypair, self-signed
+   cert), then walks each cluster endpoint until one answers. For
+   that endpoint:
+   - A TOFU dial fetches the peer's leaf cert.
+   - The fingerprint is compared against the one baked into the
+     token. If it doesn't match, the endpoint is skipped (could be
+     MITM, rotation in flight, or wrong cluster) and the next is
+     tried.
+   - The matched peer goes into the local trust store so the mTLS
+     reconnect is on the trusted code path.
+5. The joiner sends an `Enroll` RPC: token id, token secret, and its
+   own identity (NodeID, advertise, fingerprint, cert PEM).
+6. The cluster (any node — followers forward through the replicator)
+   constant-time compares `sha256(presented_secret)` against the
+   stored hash, checks expiry, and records the joiner's identity
+   under that token.
+   - If the token was issued with `--auto-approve`, the cluster
+     immediately atomically removes the token and adds the joiner to
+     `cluster.yaml.peers`. Replication propagates the new peer to
+     every other node, where `daemon.syncTrustFromCluster` populates
+     each follower's trust store.
+   - Without `--auto-approve`, the cluster records the joiner as a
+     pending claim and returns "pending". A cluster operator then
+     runs `qu enroll approve <id>` to commit (same atomic mutation).
+7. On `Accepted`, the response includes every existing peer's cert
+   PEM so the joiner can populate its own trust store before
+   `qu serve` even starts. On `Pending`, the joiner already trusts
+   the bootstrap peer; the heartbeat loop will pull the full
+   `cluster.yaml` once approval lands.
 
-If you skip verification, you trust the network at that moment. If
-the network was MITM'd at exactly that moment, you trust the
-attacker. After the prompt, the cert is pinned and the window closes.
+**Trust is acquired from both sides.** The cluster authorises the
+joiner by issuing the token (`--auto-approve`) or by `qu enroll
+approve` (manual). The joiner authorises the cluster by verifying
+the leaf-cert fingerprint against the token before sending anything
+secret.
 
-## Cluster secret rotation
+## Revoking and rotating
 
-There is no built-in command to rotate the cluster secret. The hard
-part isn't generating a new one — it's distributing it consistently
-across every node. The pragmatic recipe:
+| Action                                  | How                                                              |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| Cancel an outstanding token             | `qu enroll revoke <id>` (or just let it expire).                 |
+| See what's pending                      | `qu enroll list`                                                 |
+| Roll a node's RSA keypair               | Wipe `$QUPTIME_DIR`, generate a fresh token, run `qu enroll join`. The `node_id` will be new; `qu node remove <old-node-id>` evicts the old identity. |
 
-1. Generate a new secret on one node and copy it to every other node.
-2. Update `node.yaml.cluster_secret` on every node (manual edit).
-3. Restart each daemon one at a time, verifying quorum returns
-   between restarts.
-
-Rotation only protects future `Join` calls, not anything else. If you
-suspect the old secret has been seen by an adversary, also assume any
-peer that was added during the leaked window is compromised, and
-re-init those peers from scratch.
+There is no global "cluster secret" to rotate — every enrollment is
+its own one-shot credential. If you suspect a single token has
+leaked, revoke it and any peer that was added during the leaked
+window.
 
 ## Identity rotation
 
@@ -102,17 +165,17 @@ To roll a node's RSA keypair (e.g., the private key was on a laptop
 that got stolen):
 
 ```sh
-# On the compromised node:
+# On a surviving healthy node, mint a fresh token:
+sudo -u quptime qu enroll create --name new-bravo --auto-approve
+
+# On the compromised node, wipe and re-enrol:
 sudo systemctl stop quptime
 sudo rm -rf /etc/quptime
-sudo -u quptime qu init \
-  --advertise this-host.example.com:9901 \
-  --secret '<existing cluster secret>'
+sudo -u quptime qu enroll join <token> --advertise this-host.example.com:9901
 sudo systemctl start quptime
 
-# On a surviving healthy node:
-sudo -u quptime qu node remove <old-node-id>      # evict the old identity
-sudo -u quptime qu node add this-host.example.com:9901
+# Back on a healthy node, evict the old identity:
+sudo -u quptime qu node remove <old-node-id>
 ```
 
 The new `node_id` is a fresh UUID; the old one is gone for good. Any
@@ -129,6 +192,7 @@ secrets in the protocol.
 Anyone who can `read+write` the socket can:
 
 - Propose cluster mutations (will be relayed to the master).
+- Mint enrollment tokens for the cluster.
 - Read full cluster state including `cluster.yaml`.
 - Trigger test alerts.
 
@@ -148,6 +212,6 @@ user gets this right.
 - [ ] If `:9901` is internet-reachable, firewall allow-list to peer
       IPs or use an overlay — see [public-internet.md](deployment/public-internet.md)
       and [tailscale.md](deployment/tailscale.md).
-- [ ] Cluster secret generated by `qu init` (not chosen by a human),
-      stored in your secret manager.
+- [ ] Outstanding enrollment tokens carry the shortest TTL that fits
+      your deployment pipeline. Revoke any token you no longer need.
 - [ ] Backups of `keys/` and `node.yaml` are encrypted at rest.

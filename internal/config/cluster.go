@@ -32,6 +32,8 @@ const (
 	CheckHTTP CheckType = "http"
 	CheckTCP  CheckType = "tcp"
 	CheckICMP CheckType = "icmp"
+	CheckTLS  CheckType = "tls"
+	CheckDNS  CheckType = "dns"
 )
 
 // Check describes a single monitored target.
@@ -46,6 +48,28 @@ type Check struct {
 	// HTTP-only options.
 	ExpectStatus int    `yaml:"expect_status,omitempty"`
 	BodyMatch    string `yaml:"body_match,omitempty"`
+
+	// TLS-only options.
+	//
+	// TLSWarnDays trips the check when the leaf certificate's
+	// NotAfter is within this many days of now. Default 14 when 0.
+	// TLSServerName overrides the SNI sent during the handshake;
+	// when empty, the host portion of Target is used.
+	TLSWarnDays   int    `yaml:"tls_warn_days,omitempty"`
+	TLSServerName string `yaml:"tls_server_name,omitempty"`
+
+	// DNS-only options.
+	//
+	// DNSRecord selects which record type to look up
+	// (a | aaaa | cname | mx | txt | ns). Default "a" when empty.
+	// DNSResolver is an optional "host:port" of a specific resolver
+	// to query (e.g. "1.1.1.1:53"). When empty, the system resolver
+	// is used. DNSExpect is an optional substring that must appear
+	// in at least one answer for the check to be UP; empty means a
+	// non-empty answer set is enough.
+	DNSRecord   string `yaml:"dns_record,omitempty"`
+	DNSResolver string `yaml:"dns_resolver,omitempty"`
+	DNSExpect   string `yaml:"dns_expect,omitempty"`
 
 	// AlertIDs lists which configured alerts fire when this check
 	// transitions state.
@@ -97,6 +121,65 @@ type Alert struct {
 	BodyTemplate    string `yaml:"body_template,omitempty"`
 }
 
+// PendingEnrollment is a pre-deployment authorization token issued by
+// the cluster. It lives in the replicated config so any peer can
+// validate a presented token (the new node may reach any peer first,
+// not necessarily the master).
+//
+// The Secret on the token-string handed to the operator never lands in
+// cluster.yaml — only SecretHash does, so a peer that leaks its
+// cluster.yaml does not also leak usable tokens. AutoApprove controls
+// whether successful submission immediately adds the joiner as a peer,
+// or instead parks the joiner under PendingJoin awaiting a separate
+// `qu enroll approve` from a cluster operator.
+type PendingEnrollment struct {
+	// ID is the public, non-secret identifier for this token. Used by
+	// the enroll RPC to look up the entry and by `qu enroll list /
+	// approve / revoke` to reference it.
+	ID string `yaml:"id"`
+
+	// Name is an optional human-readable label (e.g. "bravo", "us-east-2").
+	Name string `yaml:"name,omitempty"`
+
+	// SecretHash is sha256(token.Secret), stored only as the hash so an
+	// operator who can read cluster.yaml cannot replay a token.
+	SecretHash string `yaml:"secret_hash"`
+
+	// AutoApprove decides what happens when a joiner submits this token:
+	// true  → master immediately adds the joiner as a peer and removes
+	//         the token. The cluster operator's act of issuing the token
+	//         is the approval.
+	// false → master records the joiner under PendingJoin and returns
+	//         "pending"; an operator must run `qu enroll approve <id>`
+	//         to commit.
+	AutoApprove bool `yaml:"auto_approve,omitempty"`
+
+	// CreatedBy is the NodeID that issued the token.
+	CreatedBy string `yaml:"created_by"`
+
+	// CreatedAt / ExpiresAt scope the token's lifetime. The master
+	// rejects submissions after ExpiresAt and prunes expired tokens
+	// during normal mutation paths.
+	CreatedAt time.Time `yaml:"created_at"`
+	ExpiresAt time.Time `yaml:"expires_at"`
+
+	// PendingJoin is set when AutoApprove=false and a joiner has
+	// submitted their identity. nil means "token issued, no joiner has
+	// claimed it yet". When set, `qu enroll approve <id>` commits this
+	// peer into the cluster.
+	PendingJoin *PendingJoin `yaml:"pending_join,omitempty"`
+}
+
+// PendingJoin is the joiner-side material recorded under a non-auto
+// enrollment between submission and operator approval.
+type PendingJoin struct {
+	NodeID      string    `yaml:"node_id"`
+	Advertise   string    `yaml:"advertise"`
+	Fingerprint string    `yaml:"fingerprint"`
+	CertPEM     string    `yaml:"cert_pem"`
+	SubmittedAt time.Time `yaml:"submitted_at"`
+}
+
 // ClusterConfig is the replicated cluster state. The Version field
 // strictly increases on every mutation; the master is the only node
 // that bumps it.
@@ -105,9 +188,10 @@ type ClusterConfig struct {
 	UpdatedAt time.Time `yaml:"updated_at"`
 	UpdatedBy string    `yaml:"updated_by"`
 
-	Peers  []PeerInfo `yaml:"peers"`
-	Checks []Check    `yaml:"checks"`
-	Alerts []Alert    `yaml:"alerts"`
+	Peers              []PeerInfo          `yaml:"peers"`
+	Checks             []Check             `yaml:"checks"`
+	Alerts             []Alert             `yaml:"alerts"`
+	PendingEnrollments []PendingEnrollment `yaml:"pending_enrollments,omitempty"`
 
 	mu       sync.RWMutex `yaml:"-"`
 	onChange []func()     // fired after any successful Mutate/Replace
@@ -193,14 +277,35 @@ func (c *ClusterConfig) Snapshot() *ClusterConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	cp := &ClusterConfig{
-		Version:   c.Version,
-		UpdatedAt: c.UpdatedAt,
-		UpdatedBy: c.UpdatedBy,
-		Peers:     append([]PeerInfo(nil), c.Peers...),
-		Checks:    append([]Check(nil), c.Checks...),
-		Alerts:    append([]Alert(nil), c.Alerts...),
+		Version:            c.Version,
+		UpdatedAt:          c.UpdatedAt,
+		UpdatedBy:          c.UpdatedBy,
+		Peers:              append([]PeerInfo(nil), c.Peers...),
+		Checks:             append([]Check(nil), c.Checks...),
+		Alerts:             append([]Alert(nil), c.Alerts...),
+		PendingEnrollments: copyEnrollments(c.PendingEnrollments),
 	}
 	return cp
+}
+
+// copyEnrollments returns a defensive copy of the enrollment slice
+// including any PendingJoin pointers (Go slice copy aliases the
+// pointer; we want a fresh struct so callers can mutate without
+// affecting the live config).
+func copyEnrollments(src []PendingEnrollment) []PendingEnrollment {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make([]PendingEnrollment, len(src))
+	for i, e := range src {
+		cp := e
+		if e.PendingJoin != nil {
+			pj := *e.PendingJoin
+			cp.PendingJoin = &pj
+		}
+		out[i] = cp
+	}
+	return out
 }
 
 // Mutate runs fn under the config write lock, bumps Version on
@@ -244,6 +349,7 @@ func (c *ClusterConfig) Replace(incoming *ClusterConfig) (bool, error) {
 	c.Peers = append([]PeerInfo(nil), incoming.Peers...)
 	c.Checks = append([]Check(nil), incoming.Checks...)
 	c.Alerts = append([]Alert(nil), incoming.Alerts...)
+	c.PendingEnrollments = copyEnrollments(incoming.PendingEnrollments)
 	out, err := yaml.Marshal(c)
 	if err != nil {
 		c.mu.Unlock()
@@ -314,6 +420,46 @@ func (c *ClusterConfig) FindAlert(idOrName string) *Alert {
 	for i := range c.Alerts {
 		if c.Alerts[i].ID == idOrName || c.Alerts[i].Name == idOrName {
 			cp := c.Alerts[i]
+			return &cp
+		}
+	}
+	return nil
+}
+
+// FindEnrollment returns the enrollment with the given ID or Name, or
+// nil if no entry matches. Result is a copy (PendingJoin too) — safe
+// for the caller to mutate.
+func (c *ClusterConfig) FindEnrollment(idOrName string) *PendingEnrollment {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for i := range c.PendingEnrollments {
+		e := c.PendingEnrollments[i]
+		if e.ID == idOrName || (e.Name != "" && e.Name == idOrName) {
+			cp := e
+			if e.PendingJoin != nil {
+				pj := *e.PendingJoin
+				cp.PendingJoin = &pj
+			}
+			return &cp
+		}
+	}
+	return nil
+}
+
+// FindEnrollmentByID returns the entry matching the exact ID. Unlike
+// FindEnrollment, it does not fall back to matching Name — useful
+// inside the RPC path where the joiner presents the ID verbatim.
+func (c *ClusterConfig) FindEnrollmentByID(id string) *PendingEnrollment {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for i := range c.PendingEnrollments {
+		if c.PendingEnrollments[i].ID == id {
+			e := c.PendingEnrollments[i]
+			cp := e
+			if e.PendingJoin != nil {
+				pj := *e.PendingJoin
+				cp.PendingJoin = &pj
+			}
 			return &cp
 		}
 	}

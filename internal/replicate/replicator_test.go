@@ -151,6 +151,104 @@ func TestHandleApplyClusterCfgGatesOnVersion(t *testing.T) {
 	}
 }
 
+// TestEnrollmentLifecycle walks the full enrollment-token mutation
+// path: master records an enrollment, records the joiner's pending
+// material under it, then approves — which atomically removes the
+// token entry and installs the joiner as a peer.
+func TestEnrollmentLifecycle(t *testing.T) {
+	r, cluster, _ := newReplicator(t, true, true)
+
+	// 1. Add the enrollment.
+	enrollPayload, _ := json.Marshal(config.PendingEnrollment{
+		ID:         "tok-abc",
+		Name:       "bravo",
+		SecretHash: "sha256:deadbeef",
+	})
+	if _, err := r.LocalMutate(context.Background(), transport.MutationAddEnrollment, json.RawMessage(enrollPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cluster.Snapshot().PendingEnrollments); got != 1 {
+		t.Fatalf("after add: enrollments=%d want 1", got)
+	}
+
+	// 2. Record a joiner under it.
+	recordPayload, _ := json.Marshal(struct {
+		ID          string              `json:"id"`
+		PendingJoin *config.PendingJoin `json:"pending_join"`
+	}{
+		ID: "tok-abc",
+		PendingJoin: &config.PendingJoin{
+			NodeID:      "joiner-1",
+			Advertise:   "joiner.example.com:9901",
+			Fingerprint: "sha256:cafef00d",
+			CertPEM:     "-----CERT-----",
+		},
+	})
+	if _, err := r.LocalMutate(context.Background(), transport.MutationRecordEnrollPending, json.RawMessage(recordPayload)); err != nil {
+		t.Fatal(err)
+	}
+	got := cluster.Snapshot().PendingEnrollments[0]
+	if got.PendingJoin == nil || got.PendingJoin.NodeID != "joiner-1" {
+		t.Fatalf("pending join not recorded: %+v", got)
+	}
+
+	// 3. Approve.
+	approve, _ := json.Marshal("tok-abc")
+	if _, err := r.LocalMutate(context.Background(), transport.MutationApproveEnrollment, json.RawMessage(approve)); err != nil {
+		t.Fatal(err)
+	}
+	snap := cluster.Snapshot()
+	if len(snap.PendingEnrollments) != 0 {
+		t.Errorf("approval did not clear token: %+v", snap.PendingEnrollments)
+	}
+	if len(snap.Peers) != 1 || snap.Peers[0].NodeID != "joiner-1" {
+		t.Errorf("approval did not add peer: %+v", snap.Peers)
+	}
+}
+
+// TestApproveEnrollmentWithoutPendingJoinFails — approval on a token
+// that has not been claimed yet must return an error rather than
+// silently committing a half-formed peer entry.
+func TestApproveEnrollmentWithoutPendingJoinFails(t *testing.T) {
+	r, cluster, _ := newReplicator(t, true, true)
+	enrollPayload, _ := json.Marshal(config.PendingEnrollment{
+		ID:         "tok-xyz",
+		SecretHash: "sha256:abcd",
+	})
+	if _, err := r.LocalMutate(context.Background(), transport.MutationAddEnrollment, json.RawMessage(enrollPayload)); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := json.Marshal("tok-xyz")
+	if _, err := r.LocalMutate(context.Background(), transport.MutationApproveEnrollment, json.RawMessage(target)); err == nil {
+		t.Fatal("expected approve-without-pending to fail")
+	}
+	if len(cluster.Snapshot().Peers) != 0 {
+		t.Errorf("approve-without-pending added a peer anyway: %+v", cluster.Snapshot().Peers)
+	}
+}
+
+// TestRevokeEnrollment drops a token from cluster.yaml without
+// touching peers.
+func TestRevokeEnrollment(t *testing.T) {
+	r, cluster, _ := newReplicator(t, true, true)
+	enrollPayload, _ := json.Marshal(config.PendingEnrollment{
+		ID:         "tok-rev",
+		SecretHash: "sha256:abcd",
+	})
+	if _, err := r.LocalMutate(context.Background(), transport.MutationAddEnrollment, json.RawMessage(enrollPayload)); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := json.Marshal("tok-rev")
+	if _, err := r.LocalMutate(context.Background(), transport.MutationRemoveEnrollment, json.RawMessage(target)); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cluster.Snapshot().PendingEnrollments); got != 0 {
+		t.Errorf("revoke left %d enrollment(s)", got)
+	}
+}
+
 func TestHandleProposeMutationRejectsNonMaster(t *testing.T) {
 	r, _, _ := newReplicator(t, false, true)
 	resp := r.HandleProposeMutation(context.Background(), transport.ProposeMutationRequest{

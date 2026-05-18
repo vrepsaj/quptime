@@ -298,6 +298,102 @@ func (r *Replicator) applyLocally(kind transport.MutationKind, payload json.RawM
 			}
 			return fmt.Errorf("no such peer %q", target)
 
+		case transport.MutationAddEnrollment:
+			var e config.PendingEnrollment
+			if err := json.Unmarshal(payload, &e); err != nil {
+				return fmt.Errorf("decode enrollment: %w", err)
+			}
+			if e.ID == "" || e.SecretHash == "" {
+				return errors.New("enrollment needs id and secret_hash")
+			}
+			// Replace if same ID already exists (e.g. operator re-issued
+			// a token before the old one expired).
+			for i, existing := range c.PendingEnrollments {
+				if existing.ID == e.ID {
+					c.PendingEnrollments[i] = e
+					return nil
+				}
+			}
+			c.PendingEnrollments = append(c.PendingEnrollments, e)
+			return nil
+
+		case transport.MutationRemoveEnrollment:
+			var target string
+			if err := json.Unmarshal(payload, &target); err != nil {
+				return fmt.Errorf("decode target: %w", err)
+			}
+			for i, existing := range c.PendingEnrollments {
+				if existing.ID == target || (existing.Name != "" && existing.Name == target) {
+					c.PendingEnrollments = append(c.PendingEnrollments[:i], c.PendingEnrollments[i+1:]...)
+					return nil
+				}
+			}
+			return fmt.Errorf("no such enrollment %q", target)
+
+		case transport.MutationRecordEnrollPending:
+			// Payload: { "id": <enrollment-id>, "pending_join": <PendingJoin> }
+			var body struct {
+				ID          string              `json:"id"`
+				PendingJoin *config.PendingJoin `json:"pending_join"`
+			}
+			if err := json.Unmarshal(payload, &body); err != nil {
+				return fmt.Errorf("decode record-pending: %w", err)
+			}
+			if body.ID == "" || body.PendingJoin == nil {
+				return errors.New("record-pending needs id and pending_join")
+			}
+			for i := range c.PendingEnrollments {
+				if c.PendingEnrollments[i].ID == body.ID {
+					c.PendingEnrollments[i].PendingJoin = body.PendingJoin
+					return nil
+				}
+			}
+			return fmt.Errorf("no such enrollment %q", body.ID)
+
+		case transport.MutationApproveEnrollment:
+			// Payload: enrollment id-or-name. Looks up the entry, requires
+			// PendingJoin to be set (a joiner has submitted), then in one
+			// atomic mutation: adds the joiner as a peer and removes the
+			// enrollment.
+			var target string
+			if err := json.Unmarshal(payload, &target); err != nil {
+				return fmt.Errorf("decode target: %w", err)
+			}
+			idx := -1
+			for i, existing := range c.PendingEnrollments {
+				if existing.ID == target || (existing.Name != "" && existing.Name == target) {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 {
+				return fmt.Errorf("no such enrollment %q", target)
+			}
+			pj := c.PendingEnrollments[idx].PendingJoin
+			if pj == nil {
+				return fmt.Errorf("enrollment %q has no pending join to approve", target)
+			}
+			// Add or replace the peer.
+			peer := config.PeerInfo{
+				NodeID:      pj.NodeID,
+				Advertise:   pj.Advertise,
+				Fingerprint: pj.Fingerprint,
+				CertPEM:     pj.CertPEM,
+			}
+			replaced := false
+			for i, existing := range c.Peers {
+				if existing.NodeID == peer.NodeID {
+					c.Peers[i] = peer
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				c.Peers = append(c.Peers, peer)
+			}
+			c.PendingEnrollments = append(c.PendingEnrollments[:idx], c.PendingEnrollments[idx+1:]...)
+			return nil
+
 		default:
 			return fmt.Errorf("unknown mutation kind %q", kind)
 		}

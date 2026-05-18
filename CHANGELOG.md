@@ -4,6 +4,116 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.0] — unreleased
+
+### Added
+
+- **TLS cert-expiry probe** (`qu check add tls`). Dials the target
+  over TLS, captures the leaf certificate, and flips DOWN when it is
+  expired or within `--warn-days` (default 14) of expiry. Target may
+  be a bare host, `host:port`, or a full `https://` URL — bare hosts
+  default to `:443`. Chain validity is intentionally not verified, so
+  self-signed endpoints work the same way; the check is about
+  knowing when the cert needs rotating, not about trust. `--sni`
+  overrides the server name when the cert is presented by a different
+  hostname than the dial target.
+- **DNS probe** (`qu check add dns`). Resolves the target with the
+  configured `--record` type (`a` | `aaaa` | `cname` | `mx` | `txt` |
+  `ns`, default `a`), optionally via a specific `--resolver`
+  (e.g. `1.1.1.1:53`), and flips DOWN on `NXDOMAIN`, an empty answer
+  set, or — when `--expect <substring>` is given — when no answer
+  contains the required substring (case-insensitive).
+- Both new check types are also available via the TUI add/edit
+  pickers and via the manual-edit path in `cluster.yaml` (new fields:
+  `tls_warn_days`, `tls_server_name`, `dns_record`, `dns_resolver`,
+  `dns_expect`; all `omitempty`).
+- **`qu check test <id-or-name> [--state down|up|recovered]`** fires
+  a synthetic transition for a *real* check through every alert that
+  would actually receive it (defaults + explicit `alert_ids` minus
+  `suppress_alert_ids`), with a type-aware placeholder `Detail` so
+  TLS / DNS / HTTP templates render representative copy. The
+  hysteresis filter that normally suppresses Unknown→Up is bypassed
+  for tests, so all three verbs (DOWN, RECOVERED, UP) actually fire.
+  In the TUI, `t` on the Checks tab opens a picker for the same
+  three transitions; `t` on the Alerts tab still sends the simpler
+  per-channel synthetic test message it did before. New daemon
+  control method `check.test`; new dispatcher method
+  `Dispatcher.TestCheck`.
+- **Update command** (`qu update`) to update the binary in-place atomically.
+- **Pre-deployment enrollment tokens** (`qu enroll create / list /
+  approve / revoke / join`). Replace the shared `cluster_secret`
+  model with single-use, time-limited, per-token credentials. Trust
+  is acquired from both sides: the joiner verifies the cluster's
+  TLS fingerprint baked into the token before submitting, and the
+  cluster either auto-approves (`--auto-approve`) or requires
+  `qu enroll approve <id>` to commit the new peer. Pending
+  enrollments live in `cluster.yaml.pending_enrollments`; only the
+  sha256 hash of each token's secret is persisted.
+
+### Changed
+
+- **`Enroll` RPC** is the new bootstrap method untrusted peers may
+  call. The legacy `Join` RPC is preserved but now returns a
+  deprecation error pointing at `qu enroll` — there is no longer
+  any cluster-secret path through which a new node can be added.
+- **`node.yaml.cluster_secret` and `QUPTIME_CLUSTER_SECRET`** are
+  ignored. The daemon blanks any leftover value from `node.yaml`
+  on first start after upgrade.
+
+### Removed
+
+- **`qu node add`** (the TOFU + cluster-secret invite). Replaced by
+  the `qu enroll` family. The command remains registered as a
+  deprecation stub that prints the replacement.
+- **`qu init --secret`** flag, and the auto-generated cluster-secret
+  print on bootstrap.
+
+### Upgrade notes
+
+Existing clusters keep working with **no operator action** beyond
+rolling out the new binary — peer trust lives in `trust.yaml` and
+`cluster.yaml.peers[].cert_pem`, neither of which depended on the
+cluster secret. On first start of the upgraded daemon you will see
+`node.yaml: clearing legacy cluster_secret field (enrollment tokens
+replace it)` in the log; that's the entire migration.
+
+Things to know:
+
+- **Don't add new peers — or issue tokens — mid-rollout.** Two
+  reasons:
+  1. An upgraded node rejects the legacy `Join` RPC, and an
+     un-upgraded node hasn't learned `Enroll`, so the actual
+     enrollment dance fails at the protocol layer.
+  2. The new `pending_enrollments` field in `cluster.yaml` is
+     unknown to v0.1.x daemons. If a v0.1.x node holds master
+     during the upgrade window and applies any mutation (a new
+     check, a peer-edit, a manual cluster.yaml save), it will
+     write the file back *without* that field — silently dropping
+     any outstanding tokens.
+
+  Finish the rolling upgrade everywhere, then start enrolling new
+  hosts. Don't run `qu enroll create` until every node is on
+  v0.2.0+.
+- **Update your runbooks** for adding nodes:
+  - Old: `qu init --advertise … --secret '<paste>'` on new host, then
+    `qu node add <new-host>:9901` on an existing node.
+  - New: `qu enroll create [--auto-approve]` on an existing node →
+    copy the printed `qu enroll join <token>` command and run it on
+    the new host.
+- **`QUPTIME_CLUSTER_SECRET=…`** lines in compose/systemd env are
+  silently ignored. They won't break anything but are misleading;
+  drop them when you next touch the file.
+- **Automation that called `qu node add` or passed `qu init --secret`**
+  will fail loudly — switch it over to `qu enroll`.
+- **Scripts that scraped the cluster secret** from `qu init` stderr
+  have nothing to scrape now; the new flow mints per-host tokens on
+  demand via `qu enroll create`.
+
+`trust.yaml`, `cluster.yaml`, peer relationships, checks, and alerts
+are all preserved across the upgrade. The new
+`cluster.yaml.pending_enrollments` field is `omitempty` so it does
+not appear in clusters that aren't using it.
+
 ## [v0.1.2] — 2026-05-18
 
 ### Changed
@@ -154,3 +264,4 @@ Initial public release.
 [v0.1.0]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.0
 [v0.1.1]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.1
 [v0.1.2]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.2
+[v0.2.0]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.2.0

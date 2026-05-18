@@ -10,6 +10,13 @@ This page focuses on Tailscale because the repo ships an example
 compose for it, but everything generalises to WireGuard, Nebula, or a
 self-hosted Headscale.
 
+> **Note on cluster joining.** Where this page references a "cluster
+> secret", the daemon has been switched to pre-deployment enrollment
+> tokens (`qu enroll create` / `qu enroll join`). The overlay still
+> provides exactly the same defence-in-depth — the security argument
+> only changes in that there is no longer a single cluster-wide
+> secret to leak. See [../security.md](../security.md).
+
 ## The big idea
 
 ```

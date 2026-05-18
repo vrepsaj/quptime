@@ -243,6 +243,9 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.active == tabAlerts {
 			return m.testSelectedAlert()
 		}
+		if m.active == tabChecks {
+			return m.openTestCheckPicker()
+		}
 	case "D":
 		if m.active == tabAlerts {
 			return m.toggleSelectedDefault()
@@ -416,7 +419,7 @@ func (m model) renderHelp() string {
 	case tabPeers:
 		specific = "a add  e edit  d remove"
 	case tabChecks:
-		specific = "a add  e edit  d remove"
+		specific = "a add  e edit  d remove  t test"
 	case tabAlerts:
 		specific = "a add  e edit  d remove  t test  D toggle default"
 	}
@@ -450,6 +453,8 @@ func (m model) openAddPicker() modal {
 			{label: "HTTP", hint: "url + status code", choose: func() modal { return newAddCheckForm(config.CheckHTTP) }},
 			{label: "TCP", hint: "host:port connect", choose: func() modal { return newAddCheckForm(config.CheckTCP) }},
 			{label: "ICMP", hint: "ping a host", choose: func() modal { return newAddCheckForm(config.CheckICMP) }},
+			{label: "TLS", hint: "cert expiry warning", choose: func() modal { return newAddCheckForm(config.CheckTLS) }},
+			{label: "DNS", hint: "record resolution", choose: func() modal { return newAddCheckForm(config.CheckDNS) }},
 		})
 	case tabAlerts:
 		return newPicker("Add alert — pick type", []pickerOption{
@@ -595,6 +600,37 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// openTestCheckPicker pops a small picker over the Checks tab asking
+// which synthetic transition to fire (down / up / recovered), then
+// ships the choice to the daemon. The picker is dismissed before the
+// daemon call so the user sees the flash and not a stuck modal.
+func (m model) openTestCheckPicker() (tea.Model, tea.Cmd) {
+	id := m.checks.Selected()
+	if id == "" {
+		return m, nil
+	}
+	name := m.checks.SelectedName()
+	fire := func(state, verb string) func() tea.Cmd {
+		return func() tea.Cmd {
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				body := daemon.CheckTestBody{CheckID: id, State: state}
+				if _, err := callDaemon(ctx, daemon.CtrlCheckTest, body); err != nil {
+					return modalDone{flash: "test failed: " + err.Error(), level: flashError}
+				}
+				return modalDone{flash: "fired synthetic " + verb + " for " + name, level: flashInfo}
+			}
+		}
+	}
+	m.modal = newPicker("Test alert for "+name+" — pick transition", []pickerOption{
+		{label: "DOWN", hint: "Up → Down (most common test)", act: fire("down", "DOWN")},
+		{label: "RECOVERED", hint: "Down → Up — exercise the recovery message", act: fire("recovered", "RECOVERED")},
+		{label: "UP", hint: "Unknown → Up — bypasses the normal cold-start suppression", act: fire("up", "UP")},
+	})
+	return m, m.installModal()
 }
 
 func (m model) testSelectedAlert() (tea.Model, tea.Cmd) {

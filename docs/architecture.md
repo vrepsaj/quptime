@@ -34,14 +34,20 @@ Two layers gate access:
    during bootstrap — a brand-new node has no entry in anyone's trust
    store yet, so a strict TLS check would refuse the very first
    handshake.
-2. **RPC dispatcher** rejects every method except `Join` for callers
-   whose presented fingerprint is not in `trust.yaml`. So an untrusted
-   peer can knock on the door but cannot ask questions.
+2. **RPC dispatcher** rejects every method except `Enroll` (and the
+   deprecated `Join`, which is preserved only to return a clear error
+   to old binaries) for callers whose presented fingerprint is not in
+   `trust.yaml`. So an untrusted peer can knock on the door but cannot
+   ask questions.
 
-`Join` itself is gated by the **cluster secret** — a pre-shared base64
-string generated at `qu init` on the first node. Without it, an
-attacker who can reach `:9901` cannot enrol themselves into the
-cluster.
+`Enroll` itself is gated by a **pre-deployment token** — a single-use
+secret minted on the cluster by `qu enroll create` and presented by
+the joiner via `qu enroll join`. The cluster stores only `sha256(secret)`
+in `cluster.yaml.pending_enrollments`, so an attacker who can read
+cluster.yaml cannot replay a token. The token also embeds the
+cluster's TLS fingerprints, so the joiner refuses to send anything
+secret until it has confirmed it is talking to the right cluster — the
+trust check runs in both directions.
 
 The local CLI talks to the daemon over a unix socket with `0600`
 permissions; filesystem ACLs are the only authentication and no TLS is
