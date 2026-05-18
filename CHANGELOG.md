@@ -153,3 +153,4 @@ Initial public release.
 [v0.0.1]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.0.1
 [v0.1.0]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.0
 [v0.1.1]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.1
+[v0.1.2]: https://git.cer.sh/axodouble/quptime/releases/tag/v0.1.2
