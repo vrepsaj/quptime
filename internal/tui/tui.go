@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"git.cer.sh/axodouble/quptime/internal/config"
 	"git.cer.sh/axodouble/quptime/internal/daemon"
@@ -24,7 +24,7 @@ const refreshInterval = 2 * time.Second
 // Run starts the bubbletea program. Blocks until the user quits.
 func Run() error {
 	m := initialModel()
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	return err
 }
@@ -182,10 +182,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		newModal, cmd := m.modal.Update(msg)
 		m.modal = newModal
 		// If the modal handed off to a different modal (e.g. picker →
-		// form), seed the new one with the current terminal size so its
-		// text inputs can size themselves on first paint.
+		// form), seed the new one with the current terminal size so
+		// its text inputs can size themselves on first paint, and
+		// dispatch its Init cmd so v2's cursor blink starts immediately.
 		if newModal != nil && newModal != prev {
-			m.seedModalSize()
+			cmd = tea.Batch(cmd, m.installModal())
 		}
 		return m, cmd
 	}
@@ -233,8 +234,7 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(loadStatusCmd(), loadConfigCmd())
 	case "a":
 		m.modal = m.openAddPicker()
-		m.seedModalSize()
-		return m, nil
+		return m, m.installModal()
 	case "d":
 		return m.openRemoveConfirm()
 	case "e":
@@ -268,9 +268,11 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 // View.
 // =============================================================
 
-func (m model) View() string {
+func (m model) View() tea.View {
+	view := tea.View{AltScreen: true}
 	if m.width == 0 {
-		return "loading…"
+		view.Content = "loading…"
+		return view
 	}
 	header := m.renderHeader()
 	tabs := m.renderTabs()
@@ -281,9 +283,11 @@ func (m model) View() string {
 
 	if m.modal != nil {
 		overlay := modalStyle.Render(m.modal.View())
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		view.Content = lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlay, lipgloss.WithWhitespaceChars(" "))
+		return view
 	}
-	return page
+	view.Content = page
+	return view
 }
 
 func (m model) renderHeader() string {
@@ -512,18 +516,22 @@ func (m model) openRemoveConfirm() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.modal = newConfirm(prompt, run)
-	m.seedModalSize()
-	return m, nil
+	return m, m.installModal()
 }
 
-// seedModalSize forwards the current terminal dimensions to the modal
-// so its inputs can size themselves on first paint. Called whenever a
-// new modal is installed.
-func (m *model) seedModalSize() {
-	if m.modal == nil || m.width == 0 {
-		return
+// installModal feeds the current terminal size to the modal so its
+// inputs can size themselves on first paint, and returns the modal's
+// Init cmd. v2 forms produce a blink Cmd from Init that drives the
+// cursor animation — dispatch it so the cursor starts blinking the
+// moment the modal appears.
+func (m *model) installModal() tea.Cmd {
+	if m.modal == nil {
+		return nil
 	}
-	m.modal, _ = m.modal.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	if m.width > 0 {
+		m.modal, _ = m.modal.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	}
+	return m.modal.Init()
 }
 
 // openEditForm dispatches to the right pre-filled edit form based on the
@@ -541,8 +549,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 		for i := range m.peersFull {
 			if m.peersFull[i].NodeID == id {
 				m.modal = newEditNodeForm(m.peersFull[i])
-				m.seedModalSize()
-				return m, nil
+				return m, m.installModal()
 			}
 		}
 		m.setFlash("peer not found in local cluster.yaml", flashError)
@@ -557,8 +564,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 		for i := range m.checksFull {
 			if m.checksFull[i].ID == id {
 				m.modal = newEditCheckForm(m.checksFull[i])
-				m.seedModalSize()
-				return m, nil
+				return m, m.installModal()
 			}
 		}
 		m.setFlash("check not found in local cluster.yaml", flashError)
@@ -583,8 +589,7 @@ func (m model) openEditForm() (tea.Model, tea.Cmd) {
 				m.setFlash("unsupported alert type", flashError)
 				return m, nil
 			}
-			m.seedModalSize()
-			return m, nil
+			return m, m.installModal()
 		}
 		m.setFlash("alert not found in local cluster.yaml", flashError)
 		return m, nil

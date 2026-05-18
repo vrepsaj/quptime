@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/google/uuid"
 
 	"git.cer.sh/axodouble/quptime/internal/alerts"
@@ -37,7 +37,13 @@ const (
 // modal is implemented by every pop-up form/dialog. Parent passes all
 // input to the modal's Update; when the modal completes it returns
 // modalDone as a tea.Msg via its tea.Cmd.
+//
+// Init is called once when a modal is installed (or replaced via
+// modal → modal handoff in a picker). Return any startup Cmd here —
+// most modals return nil, but forms return the blink Cmd that drives
+// the cursor animation on the initially focused field.
 type modal interface {
+	Init() tea.Cmd
 	Update(tea.Msg) (modal, tea.Cmd)
 	View() string
 	Title() string
@@ -69,12 +75,14 @@ func (fld *formField) value() string {
 	return fld.input.Value()
 }
 
-func (fld *formField) focus() {
+// focus returns the input's blink Cmd. v2 textinput/textarea drive a
+// blinking cursor via this cmd — discard it and the cursor sits idle
+// until the user types.
+func (fld *formField) focus() tea.Cmd {
 	if fld.multiline {
-		fld.textarea.Focus()
-		return
+		return fld.textarea.Focus()
 	}
-	fld.input.Focus()
+	return fld.input.Focus()
 }
 
 func (fld *formField) blur() {
@@ -90,7 +98,7 @@ func (fld *formField) setWidth(w int) {
 		fld.textarea.SetWidth(w)
 		return
 	}
-	fld.input.Width = w
+	fld.input.SetWidth(w)
 }
 
 type form struct {
@@ -100,6 +108,11 @@ type form struct {
 	busy   bool
 	err    string
 	width  int // current terminal width; inputs resize to fill it
+
+	// initCmd is the blink Cmd produced by focusing the first field at
+	// construction time. The parent dispatches it via Init() so the
+	// cursor starts blinking the moment the form appears.
+	initCmd tea.Cmd
 
 	submit func(values []string) tea.Cmd
 }
@@ -121,18 +134,19 @@ func fieldWidthFor(termWidth int) int {
 }
 
 func newForm(title string, fields []formField, submit func([]string) tea.Cmd) *form {
+	var initCmd tea.Cmd
 	for i := range fields {
 		if !fields[i].multiline {
 			fields[i].input.Prompt = ""
 			fields[i].input.CharLimit = 256
 		}
 		if i == 0 {
-			fields[i].focus()
+			initCmd = fields[i].focus()
 		} else {
 			fields[i].blur()
 		}
 	}
-	return &form{title: title, fields: fields, submit: submit}
+	return &form{title: title, fields: fields, submit: submit, initCmd: initCmd}
 }
 
 func textField(label, hint string, required bool) formField {
@@ -144,7 +158,7 @@ func textField(label, hint string, required bool) formField {
 // contents and can tweak instead of retyping everything.
 func textFieldWithValue(label, hint, value string, required bool) formField {
 	ti := textinput.New()
-	ti.Width = defaultFieldWidth
+	ti.SetWidth(defaultFieldWidth)
 	ti.Placeholder = hint
 	if value != "" {
 		ti.SetValue(value)
@@ -186,7 +200,7 @@ func passwordField(label, hint string) formField {
 // the actual value leaking on-screen.
 func passwordFieldWithValue(label, hint, value string) formField {
 	ti := textinput.New()
-	ti.Width = defaultFieldWidth
+	ti.SetWidth(defaultFieldWidth)
 	ti.Placeholder = hint
 	ti.EchoMode = textinput.EchoPassword
 	ti.EchoCharacter = '•'
@@ -197,6 +211,8 @@ func passwordFieldWithValue(label, hint, value string) formField {
 }
 
 func (f *form) Title() string { return f.title }
+
+func (f *form) Init() tea.Cmd { return f.initCmd }
 
 func (f *form) View() string {
 	var b strings.Builder
@@ -260,20 +276,16 @@ func (f *form) Update(msg tea.Msg) (modal, tea.Cmd) {
 		case "esc":
 			return f, modalDoneCmd("", flashInfo)
 		case "tab":
-			f.advance(1)
-			return f, nil
+			return f, f.advance(1)
 		case "shift+tab":
-			f.advance(-1)
-			return f, nil
+			return f, f.advance(-1)
 		case "down":
 			if !multiline {
-				f.advance(1)
-				return f, nil
+				return f, f.advance(1)
 			}
 		case "up":
 			if !multiline {
-				f.advance(-1)
-				return f, nil
+				return f, f.advance(-1)
 			}
 		case "enter":
 			if !multiline {
@@ -300,8 +312,7 @@ func (f *form) submitOrAdvance() tea.Cmd {
 		return nil
 	}
 	if f.cursor < len(f.fields)-1 {
-		f.advance(1)
-		return nil
+		return f.advance(1)
 	}
 	vals := make([]string, len(f.fields))
 	for i := range f.fields {
@@ -311,8 +322,7 @@ func (f *form) submitOrAdvance() tea.Cmd {
 		if fld.required && strings.TrimSpace(vals[i]) == "" {
 			f.err = fld.label + " is required"
 			f.cursor = i
-			f.focusOnly(i)
-			return nil
+			return f.focusOnly(i)
 		}
 	}
 	f.busy = true
@@ -320,23 +330,27 @@ func (f *form) submitOrAdvance() tea.Cmd {
 	return f.submit(vals)
 }
 
-func (f *form) advance(delta int) {
+// advance moves the cursor by delta and returns the focus-blink Cmd
+// from the newly focused field so the parent can dispatch it.
+func (f *form) advance(delta int) tea.Cmd {
 	n := len(f.fields)
 	if n == 0 {
-		return
+		return nil
 	}
 	f.cursor = (f.cursor + delta + n) % n
-	f.focusOnly(f.cursor)
+	return f.focusOnly(f.cursor)
 }
 
-func (f *form) focusOnly(i int) {
+func (f *form) focusOnly(i int) tea.Cmd {
+	var cmd tea.Cmd
 	for j := range f.fields {
 		if j == i {
-			f.fields[j].focus()
+			cmd = f.fields[j].focus()
 		} else {
 			f.fields[j].blur()
 		}
 	}
+	return cmd
 }
 
 // formSubmitErr is a tea.Msg the submit cmd returns to surface an
@@ -696,6 +710,8 @@ func newPicker(title string, options []pickerOption) *picker {
 
 func (p *picker) Title() string { return p.title }
 
+func (p *picker) Init() tea.Cmd { return nil }
+
 func (p *picker) View() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", titleStyle.Render(p.title))
@@ -762,6 +778,8 @@ func newConfirm(prompt string, onConfirm func() tea.Cmd) *confirm {
 }
 
 func (c *confirm) Title() string { return "Confirm" }
+
+func (c *confirm) Init() tea.Cmd { return nil }
 
 func (c *confirm) View() string {
 	noStyle, yesStyle := subtleStyle, subtleStyle

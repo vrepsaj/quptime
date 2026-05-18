@@ -256,8 +256,8 @@ directly" below).
 ## Interactive TUI
 
 Prefer a dashboard over typing commands? `qu tui` opens a full-screen
-[bubbletea](https://github.com/charmbracelet/bubbletea) UI over the
-local daemon socket. The header shows quorum, master, term, and config
+[Bubble Tea v2](https://charm.land/bubbletea) UI over the local
+daemon socket. The header shows quorum, master, term, and config
 version; three tabs hold peers, checks, and alerts with auto-refresh
 every two seconds.
 
@@ -541,5 +541,5 @@ internal/checks/           HTTP/TCP/ICMP probers, scheduler, aggregator
 internal/alerts/           SMTP + Discord dispatchers, message rendering
 internal/daemon/           glue: wires every component + control socket
 internal/cli/              cobra commands, the user-facing surface
-internal/tui/              bubbletea dashboard (qu tui)
+internal/tui/              Bubble Tea v2 dashboard (qu tui)
 ```

@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.1.2] — 2026-05-18
+
+### Changed
+
+- **TUI upgraded to Bubble Tea v2 / Bubbles v2.** The interactive
+  dashboard (`qu tui`) now runs on `charm.land/bubbletea/v2` v2.0.6
+  and `charm.land/bubbles/v2` v2.1.0 (with `charm.land/lipgloss/v2`
+  v2.0.2). Form inputs now drive a real blinking cursor on first
+  paint via the v2 `Focus()` Cmd plumbed through a new `modal.Init()`
+  hook, and the alt-screen toggle has moved from a program option
+  onto the per-frame `tea.View`. No user-facing keybindings,
+  configuration, or daemon protocol changed.
+
 ## [v0.1.1] — 2026-05-15
 
 ### Changed
