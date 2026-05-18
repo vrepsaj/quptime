@@ -502,6 +502,7 @@ qu alert add discord <name> --webhook …                                       
 qu alert list / remove / test <id-or-name>
 qu alert default <id-or-name> on|off            toggle default attachment to every check
 qu trust list / remove <node-id>
+qu update [--check] [--force] [--source gitea|github]   replace this binary with the latest release
 ```
 
 All `--interval` and `--timeout` flags accept Go duration syntax: `5s`,
