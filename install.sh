@@ -220,12 +220,22 @@ repair_perms() {
     # create anything that isn't already there — that's `qu init`'s
     # job — and we don't touch unknown files an operator may have
     # parked in the dir.
+    #
+    # Use `if`/`fi` rather than `[ -f X ] && chmod Y`: bash 5.3 (ships
+    # in Ubuntu 26.04) propagates the failing test through the for
+    # loop and the function, so on a fresh install — where none of
+    # these files exist yet — `set -e` would silently abort the script
+    # before we ever write the systemd unit.
     local f
     for f in node.yaml cluster.yaml trust.yaml keys/private.pem; do
-        [ -f "$DATA_DIR/$f" ] && chmod 0600 "$DATA_DIR/$f"
+        if [ -f "$DATA_DIR/$f" ]; then
+            chmod 0600 "$DATA_DIR/$f"
+        fi
     done
     for f in keys/public.pem keys/cert.pem; do
-        [ -f "$DATA_DIR/$f" ] && chmod 0644 "$DATA_DIR/$f"
+        if [ -f "$DATA_DIR/$f" ]; then
+            chmod 0644 "$DATA_DIR/$f"
+        fi
     done
 }
 
