@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>QUptime — Alert Template Builder</title>
+<style>
+  :root {
+    --bg: #1a1b26;
+    --panel: #24283b;
+    --panel-2: #2f334d;
+    --border: #414868;
+    --fg: #c0caf5;
+    --muted: #7982a9;
+    --accent: #7aa2f7;
+    --accent-2: #9ece6a;
+    --warn: #e0af68;
+    --error: #f7768e;
+    --chip-bg: #2f334d;
+    --chip-hover: #3b4261;
+    --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 100vh;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: var(--mono);
+  }
+  header h1 .v { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .toolbar label { color: var(--muted); font-size: 12px; }
+  select, button, input[type="text"] {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover, select:hover { background: var(--chip-hover); }
+  button.primary { background: var(--accent); color: #1a1b26; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); background: var(--accent); }
+  main {
+    display: grid;
+    grid-template-columns: 260px 1fr 1fr;
+    gap: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .col {
+    padding: 16px;
+    overflow: auto;
+    border-right: 1px solid var(--border);
+  }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    margin: 0 0 6px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px 0; line-height: 1.4; }
+  .group {
+    margin-bottom: 16px;
+  }
+  .group h3 {
+    margin: 12px 0 6px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--warn);
+    letter-spacing: 0.06em;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--chip-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    margin: 0 4px 4px 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: grab;
+    user-select: none;
+    transition: background 0.15s, transform 0.05s;
+  }
+  .chip:hover { background: var(--chip-hover); }
+  .chip:active { cursor: grabbing; transform: scale(0.97); }
+  .chip[data-type="cond"] { color: var(--accent-2); }
+  .chip[data-type="var"] { color: var(--accent); }
+  .chip .tag {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .editor-wrap { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
+  .editor-wrap label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .editor-wrap label .actions { display: flex; gap: 6px; }
+  .editor-wrap label button {
+    font-size: 11px;
+    padding: 2px 8px;
+    background: transparent;
+    border-color: var(--border);
+    color: var(--muted);
+  }
+  textarea {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 10px;
+    resize: vertical;
+    width: 100%;
+    line-height: 1.5;
+    min-height: 40px;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  textarea.drop-target { border-color: var(--accent-2); background: #1f2335; }
+  .preview-block { margin-bottom: 16px; }
+  .preview-block .lbl {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .preview-block pre {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 24px;
+  }
+  .sample {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    margin-top: 8px;
+  }
+  .sample h3 {
+    margin: 0 0 8px 0;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+  }
+  .sample-row { display: grid; grid-template-columns: 140px 1fr; gap: 6px; margin-bottom: 4px; align-items: center; }
+  .sample-row label { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .sample-row input {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 4px 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    width: 100%;
+  }
+  details { margin-top: 12px; }
+  details summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 4px 0;
+    user-select: none;
+  }
+  details summary:hover { color: var(--fg); }
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--accent-2);
+    color: #1a1b26;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  @media (max-width: 1100px) {
+    main { grid-template-columns: 220px 1fr; }
+    .col.preview-col {
+      grid-column: 1 / -1;
+      border-right: none;
+      border-top: 1px solid var(--border);
+    }
+  }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    .col { border-right: none; border-bottom: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>qu builder<span class="v">alert template builder</span></h1>
+  <div class="toolbar">
+    <label for="loadDefault">Load default:</label>
+    <select id="loadDefault">
+      <option value="">— check type —</option>
+      <option value="http">HTTP</option>
+      <option value="tls">TLS</option>
+      <option value="tcp">TCP</option>
+      <option value="icmp">ICMP</option>
+      <option value="dns">DNS</option>
+    </select>
+    <button id="clearAll">Clear</button>
+    <button id="copyBoth" class="primary">Copy both</button>
+    <button id="downloadBtn">Download .txt</button>
+  </div>
+</header>
+<main>
+  <aside class="col palette">
+    <h2>Variables</h2>
+    <p class="hint">Drag onto an editor or click to insert at the caret. Variables are Go <code>text/template</code> actions.</p>
+    <div id="palette"></div>
+    <details>
+      <summary>Conditionals & whitespace</summary>
+      <div class="group" id="paletteCond"></div>
+      <p class="hint" style="margin-top:8px;">Use <code>{{-</code> / <code>-}}</code> to trim surrounding whitespace.</p>
+    </details>
+  </aside>
+
+  <section class="col editor-col">
+    <h2>Templates</h2>
+    <p class="hint">Subject is used by SMTP only — Discord ignores it. Empty fields fall back to the built-in default for the check type.</p>
+
+    <div class="editor-wrap">
+      <label>
+        <span>Subject template</span>
+        <span class="actions">
+          <button data-target="subject" class="insert-newline">⏎ newline</button>
+          <button data-target="subject" class="clear-one">clear</button>
+        </span>
+      </label>
+      <textarea id="subject" rows="2" spellcheck="false" placeholder="[quptime] {{.Check.Name}} {{.Verb}}"></textarea>
+    </div>
+
+    <div class="editor-wrap">
+      <label>
+        <span>Body template</span>
+        <span class="actions">
+          <button data-target="body" class="clear-one">clear</button>
+        </span>
+      </label>
+      <textarea id="body" rows="18" spellcheck="false" placeholder="Check &quot;{{.Check.Name}}&quot; is now {{.VerbLower}}.&#10;..."></textarea>
+    </div>
+  </section>
+
+  <section class="col preview-col">
+    <h2>Live preview</h2>
+    <p class="hint">Rendered with the sample data below. Best-effort renderer — supports <code>{{.X.Y}}</code>, <code>{{if .X}}…{{end}}</code>, and <code>{{- … -}}</code>.</p>
+
+    <div class="preview-block">
+      <div class="lbl"><span>Subject</span><button data-copy="rsubject">Copy</button></div>
+      <pre id="rsubject"></pre>
+    </div>
+    <div class="preview-block">
+      <div class="lbl"><span>Body</span><button data-copy="rbody">Copy</button></div>
+      <pre id="rbody"></pre>
+    </div>
+
+    <details>
+      <summary>Sample data ▾</summary>
+      <div class="sample" id="sample"></div>
+    </details>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script>
+"use strict";
+
+// Default templates injected by `qu builder` at generation time.
+const DEFAULTS = {
+  http:    {subject: __QU_DEFAULT_HTTP_SUBJECT__,    body: __QU_DEFAULT_HTTP_BODY__},
+  tls:     {subject: __QU_DEFAULT_TLS_SUBJECT__,     body: __QU_DEFAULT_TLS_BODY__},
+  tcp:     {subject: __QU_DEFAULT_TCP_SUBJECT__,     body: __QU_DEFAULT_TCP_BODY__},
+  icmp:    {subject: __QU_DEFAULT_ICMP_SUBJECT__,    body: __QU_DEFAULT_ICMP_BODY__},
+  dns:     {subject: __QU_DEFAULT_DNS_SUBJECT__,     body: __QU_DEFAULT_DNS_BODY__},
+  generic: {subject: __QU_DEFAULT_GENERIC_SUBJECT__, body: __QU_DEFAULT_GENERIC_BODY__},
+};
+
+// Variable palette — kept in sync with alerts.TemplateContext + config.Check.
+const PALETTE = [
+  {group: "Transition", items: [
+    {expr: "{{.Verb}}",      desc: "UP | DOWN | RECOVERED"},
+    {expr: "{{.VerbLower}}", desc: "lowercase verb"},
+    {expr: "{{.From}}",      desc: "previous state"},
+    {expr: "{{.To}}",        desc: "new state"},
+    {expr: "{{.When}}",      desc: "RFC3339 timestamp"},
+    {expr: "{{.NodeID}}",    desc: "master node id"},
+  ]},
+  {group: "Check", items: [
+    {expr: "{{.Check.Name}}",   desc: "human name"},
+    {expr: "{{.Check.Target}}", desc: "URL / host:port / host"},
+    {expr: "{{.Check.Type}}",   desc: "http|tcp|icmp|tls|dns"},
+    {expr: "{{.Check.ID}}",     desc: "stable UUID"},
+  ]},
+  {group: "Aggregate snapshot", items: [
+    {expr: "{{.Snapshot.Detail}}",  desc: "probe detail string"},
+    {expr: "{{.Snapshot.Reports}}", desc: "total reports"},
+    {expr: "{{.Snapshot.OKCount}}", desc: "ok reports"},
+    {expr: "{{.Snapshot.NotOK}}",   desc: "failing reports"},
+  ]},
+  {group: "HTTP fields", items: [
+    {expr: "{{.Check.ExpectStatus}}", desc: "expected HTTP status"},
+    {expr: "{{.Check.BodyMatch}}",    desc: "expected body substring"},
+  ]},
+  {group: "TLS fields", items: [
+    {expr: "{{.Check.TLSWarnDays}}",   desc: "warn-before-expiry days"},
+    {expr: "{{.Check.TLSServerName}}", desc: "SNI override"},
+  ]},
+  {group: "DNS fields", items: [
+    {expr: "{{.Check.DNSRecord}}",   desc: "record type (a, mx, …)"},
+    {expr: "{{.Check.DNSResolver}}", desc: "resolver host:port"},
+    {expr: "{{.Check.DNSExpect}}",   desc: "expected substring"},
+  ]},
+];
+
+const CONDITIONALS = [
+  {expr: "{{if .Check.BodyMatch}}…{{end}}",     desc: "render only if set"},
+  {expr: "{{if .Snapshot.Detail}}…{{end}}",     desc: "render only if set"},
+  {expr: "{{- if .Check.ExpectStatus}}…{{end}}", desc: "trim leading whitespace"},
+];
+
+// Sample context used to render the preview. Editable in the side panel.
+const SAMPLE = {
+  Check: {
+    Name: "homepage",
+    Target: "https://example.com/",
+    Type: "http",
+    ID: "0e16f1b1-5b3e-4f12-9a4d-1e02c79fef88",
+    ExpectStatus: 200,
+    BodyMatch: "Welcome",
+    TLSWarnDays: 14,
+    TLSServerName: "example.com",
+    DNSRecord: "a",
+    DNSResolver: "1.1.1.1:53",
+    DNSExpect: "93.184",
+  },
+  Verb: "DOWN",
+  VerbLower: "down",
+  From: "up",
+  To: "down",
+  NodeID: "alpha",
+  When: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
+  Snapshot: {
+    Detail: "connection refused",
+    Reports: 3,
+    OKCount: 1,
+    NotOK: 2,
+  },
+};
+
+// ---------- Go text/template subset renderer ----------
+//
+// Supports: {{ .Path.To.Field }}, {{- ... -}}, {{ if .X }}...{{ else }}...{{ end }}.
+// Unknown actions become "". The aim is preview parity with the qu defaults,
+// not 100 % template/text coverage.
+
+function lookup(ctx, path) {
+  if (!path || path[0] !== ".") return undefined;
+  let v = ctx;
+  for (const p of path.slice(1).split(".").filter(Boolean)) {
+    if (v == null) return undefined;
+    v = v[p];
+  }
+  return v;
+}
+
+function truthy(v) {
+  if (v == null) return false;
+  if (typeof v === "string") return v.length > 0;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "boolean") return v;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+function tokenize(tmpl) {
+  const re = /\{\{(-)?\s*([\s\S]*?)\s*(-)?\}\}/g;
+  const tokens = [];
+  let last = 0, m;
+  while ((m = re.exec(tmpl)) !== null) {
+    let text = tmpl.slice(last, m.index);
+    if (m[1] === "-") text = text.replace(/\s+$/, "");
+    if (text) tokens.push({t: "text", v: text});
+    tokens.push({t: "act", v: m[2].trim(), trimRight: m[3] === "-"});
+    last = m.index + m[0].length;
+  }
+  let tail = tmpl.slice(last);
+  if (tokens.length && tokens[tokens.length-1].trimRight) tail = tail.replace(/^\s+/, "");
+  if (tail) tokens.push({t: "text", v: tail});
+  // tokens[i].trimRight already handled when followed by text — but if not
+  // followed by text (action-action), simply ignore; no whitespace to trim.
+  for (let i = 0; i < tokens.length - 1; i++) {
+    if (tokens[i].t === "act" && tokens[i].trimRight && tokens[i+1].t === "text") {
+      tokens[i+1].v = tokens[i+1].v.replace(/^\s+/, "");
+    }
+  }
+  return tokens;
+}
+
+function render(tmpl, ctx) {
+  let tokens;
+  try { tokens = tokenize(tmpl); }
+  catch (e) { return "⟨tokenize error: " + e.message + "⟩"; }
+  let out = "";
+  // Stack: each frame { emit, parentEmit, taken }
+  const stack = [{emit: true, parentEmit: true, taken: true}];
+  const top = () => stack[stack.length-1];
+  for (const tok of tokens) {
+    if (tok.t === "text") {
+      if (top().emit) out += tok.v;
+      continue;
+    }
+    const a = tok.v;
+    if (a === "end") {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    if (a === "else") {
+      const f = top();
+      f.emit = f.parentEmit && !f.taken;
+      f.taken = f.taken || f.emit;
+      continue;
+    }
+    if (/^if\s+/.test(a)) {
+      const cond = a.replace(/^if\s+/, "").trim();
+      const t = truthy(lookup(ctx, cond));
+      const parent = top().emit;
+      stack.push({emit: parent && t, parentEmit: parent, taken: parent && t});
+      continue;
+    }
+    if (/^with\s+/.test(a) || /^range\s+/.test(a)) {
+      // best-effort: emit nothing and treat as a falsy branch
+      const parent = top().emit;
+      stack.push({emit: false, parentEmit: parent, taken: false});
+      continue;
+    }
+    if (a.startsWith(".")) {
+      if (top().emit) {
+        const v = lookup(ctx, a);
+        out += (v == null ? "" : String(v));
+      }
+      continue;
+    }
+    // Unknown action: drop silently.
+  }
+  return out;
+}
+
+// ---------- UI wiring ----------
+
+const $ = (id) => document.getElementById(id);
+const subjectEl = $("subject");
+const bodyEl = $("body");
+const rsubjEl = $("rsubject");
+const rbodyEl = $("rbody");
+
+function buildPalette() {
+  const root = $("palette");
+  for (const grp of PALETTE) {
+    const wrap = document.createElement("div");
+    wrap.className = "group";
+    const h = document.createElement("h3");
+    h.textContent = grp.group;
+    wrap.appendChild(h);
+    for (const v of grp.items) {
+      wrap.appendChild(makeChip(v.expr, v.desc, "var"));
+    }
+    root.appendChild(wrap);
+  }
+  const condRoot = $("paletteCond");
+  for (const c of CONDITIONALS) condRoot.appendChild(makeChip(c.expr, c.desc, "cond"));
+}
+
+function makeChip(expr, desc, type) {
+  const c = document.createElement("span");
+  c.className = "chip";
+  c.dataset.expr = expr;
+  c.dataset.type = type;
+  c.title = desc;
+  c.draggable = true;
+  c.textContent = expr;
+  c.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", expr);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+  c.addEventListener("click", () => insertIntoFocused(expr));
+  return c;
+}
+
+let lastFocused = subjectEl;
+for (const el of [subjectEl, bodyEl]) {
+  el.addEventListener("focus", () => { lastFocused = el; });
+  el.addEventListener("input", schedulePreview);
+  el.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    el.classList.add("drop-target");
+  });
+  el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    el.classList.remove("drop-target");
+    const expr = e.dataTransfer.getData("text/plain");
+    if (!expr) return;
+    insertAtCaret(el, expr);
+    el.focus();
+  });
+}
+
+function insertIntoFocused(expr) {
+  const el = lastFocused || subjectEl;
+  insertAtCaret(el, expr);
+  el.focus();
+}
+
+function insertAtCaret(el, text) {
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  el.value = el.value.slice(0, start) + text + el.value.slice(end);
+  const caret = start + text.length;
+  el.selectionStart = el.selectionEnd = caret;
+  el.dispatchEvent(new Event("input", {bubbles: true}));
+}
+
+// ---------- Sample data editor ----------
+
+function flattenSample(obj, prefix) {
+  const rows = [];
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    const path = prefix ? prefix + "." + k : k;
+    if (v != null && typeof v === "object" && !Array.isArray(v)) {
+      rows.push(...flattenSample(v, path));
+    } else {
+      rows.push({path, value: v});
+    }
+  }
+  return rows;
+}
+
+function setSampleValue(path, value) {
+  const parts = path.split(".");
+  let cur = SAMPLE;
+  for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]];
+  const key = parts[parts.length - 1];
+  const orig = cur[key];
+  if (typeof orig === "number") {
+    const n = Number(value);
+    cur[key] = Number.isFinite(n) ? n : 0;
+  } else {
+    cur[key] = value;
+  }
+}
+
+function buildSample() {
+  const root = $("sample");
+  root.innerHTML = "";
+  const h = document.createElement("h3");
+  h.textContent = "Edit any field to see it reflected in the preview";
+  root.appendChild(h);
+  for (const r of flattenSample(SAMPLE, "")) {
+    const row = document.createElement("div");
+    row.className = "sample-row";
+    const lbl = document.createElement("label");
+    lbl.textContent = "." + r.path;
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.value = String(r.value);
+    inp.addEventListener("input", () => {
+      setSampleValue(r.path, inp.value);
+      schedulePreview();
+    });
+    row.appendChild(lbl);
+    row.appendChild(inp);
+    root.appendChild(row);
+  }
+}
+
+// ---------- Preview ----------
+
+let previewTimer = null;
+function schedulePreview() {
+  if (previewTimer) cancelAnimationFrame(previewTimer);
+  previewTimer = requestAnimationFrame(updatePreview);
+}
+
+function updatePreview() {
+  const subj = subjectEl.value || pickDefault().subject;
+  const body = bodyEl.value || pickDefault().body;
+  rsubjEl.textContent = render(subj, SAMPLE);
+  rbodyEl.textContent = render(body, SAMPLE);
+}
+
+function pickDefault() {
+  const t = SAMPLE.Check.Type;
+  return DEFAULTS[t] || DEFAULTS.generic;
+}
+
+// ---------- Toolbar ----------
+
+$("loadDefault").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (!v || !DEFAULTS[v]) return;
+  subjectEl.value = DEFAULTS[v].subject;
+  bodyEl.value = DEFAULTS[v].body;
+  SAMPLE.Check.Type = v;
+  buildSample();
+  schedulePreview();
+  e.target.value = "";
+});
+
+$("clearAll").addEventListener("click", () => {
+  if (!subjectEl.value && !bodyEl.value) return;
+  if (!confirm("Clear both subject and body?")) return;
+  subjectEl.value = "";
+  bodyEl.value = "";
+  schedulePreview();
+});
+
+document.querySelectorAll(".clear-one").forEach((b) => {
+  b.addEventListener("click", () => {
+    const id = b.dataset.target;
+    $(id).value = "";
+    schedulePreview();
+  });
+});
+
+document.querySelectorAll(".insert-newline").forEach((b) => {
+  b.addEventListener("click", () => insertAtCaret($(b.dataset.target), "\n"));
+});
+
+$("copyBoth").addEventListener("click", async () => {
+  const text =
+    "# subject\n" + subjectEl.value + "\n\n" +
+    "# body\n" + bodyEl.value + "\n";
+  await copy(text);
+  toast("Copied subject + body");
+});
+
+document.querySelectorAll("[data-copy]").forEach((b) => {
+  b.addEventListener("click", async () => {
+    await copy($(b.dataset.copy).textContent);
+    toast("Copied");
+  });
+});
+
+$("downloadBtn").addEventListener("click", () => {
+  const text =
+    "# QUptime alert template\n" +
+    "# subject:\n" +
+    subjectEl.value + "\n\n" +
+    "# body:\n" +
+    bodyEl.value + "\n";
+  const blob = new Blob([text], {type: "text/plain"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "quptime-template.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const t = document.createElement("textarea");
+    t.value = text;
+    document.body.appendChild(t);
+    t.select();
+    document.execCommand("copy");
+    t.remove();
+  }
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1500);
+}
+
+// ---------- Boot ----------
+
+buildPalette();
+buildSample();
+// Pre-load the HTTP default so the user sees something useful immediately.
+subjectEl.value = DEFAULTS.http.subject;
+bodyEl.value = DEFAULTS.http.body;
+schedulePreview();
+</script>
+</body>
+</html>
