@@ -37,23 +37,24 @@ type Message struct {
 }
 
 // Render produces a human-readable message from one state transition
-// using the built-in format. Used as the fallback when no custom
-// template is configured (or when a custom template fails to render).
+// using the built-in per-type format. Used as the fallback when no
+// custom template is configured (or when a custom template fails to
+// render). The exact wording varies by check.Type so HTTP, TLS, TCP,
+// ICMP, and DNS alerts each surface the fields that matter for that
+// probe — see defaults.go for the templates themselves.
 func Render(nodeID string, check *config.Check, from, to checks.State, snap checks.Snapshot) Message {
 	ctx := newContext(nodeID, check, from, to, snap)
-	subject := fmt.Sprintf("[quptime] %s %s — %s", check.Name, ctx.Verb, check.Target)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "Check %q is now %s.\n", check.Name, strings.ToUpper(ctx.To))
-	fmt.Fprintf(&b, "Previous state: %s\n", ctx.From)
-	fmt.Fprintf(&b, "Target:         %s (%s)\n", check.Target, check.Type)
-	fmt.Fprintf(&b, "Reports:        %d (ok=%d, fail=%d)\n", snap.Reports, snap.OKCount, snap.NotOK)
-	if snap.Detail != "" {
-		fmt.Fprintf(&b, "Detail:         %s\n", snap.Detail)
+	subjTmpl, bodyTmpl := defaultTemplateFor(check.Type)
+	var sb, bb bytes.Buffer
+	if err := subjTmpl.Execute(&sb, ctx); err != nil {
+		sb.Reset()
+		fmt.Fprintf(&sb, "[quptime] %s %s — %s", check.Name, ctx.Verb, check.Target)
 	}
-	fmt.Fprintf(&b, "Master:         %s\n", nodeID)
-	fmt.Fprintf(&b, "When:           %s\n", ctx.When)
-	return Message{Subject: subject, Body: b.String()}
+	if err := bodyTmpl.Execute(&bb, ctx); err != nil {
+		bb.Reset()
+		fmt.Fprintf(&bb, "Check %q is now %s. Detail: %s\n", check.Name, ctx.Verb, snap.Detail)
+	}
+	return Message{Subject: sb.String(), Body: bb.String()}
 }
 
 // RenderFor produces a message for one specific alert. If the alert
