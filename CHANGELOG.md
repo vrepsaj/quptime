@@ -11,6 +11,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - New documented deployment methods for Tailscale and EdgeVPN, with example `docker-compose.yml` files and wrapper scripts in `docker/tailscale/` and `docker/edgevpn/`.
 - New builder command `qu builder`, which generates a standalone HTML alert-template builder
 
+### Changed
+
+- **TUI modals now scroll** when a form is taller than the terminal (e.g. the SMTP "Add alert" form on a short window). The view auto-centres on the focused field and shows `↑/↓ N more` indicators when content is clipped above or below. #24
+- TUI main page no longer overflows on very short terminals — the body shrinks all the way down to a single row instead of pinning to 5.
+
 ## [v0.2.3] — 2026-05-19
 
 ### Changed

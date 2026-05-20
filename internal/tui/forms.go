@@ -108,6 +108,7 @@ type form struct {
 	busy   bool
 	err    string
 	width  int // current terminal width; inputs resize to fill it
+	height int // available content height inside the modal chrome
 
 	// initCmd is the blink Cmd produced by focusing the first field at
 	// construction time. The parent dispatches it via Init() so the
@@ -116,6 +117,10 @@ type form struct {
 
 	submit func(values []string) tea.Cmd
 }
+
+// modalChromeHeight is the number of vertical rows modalStyle eats
+// around the inner content: 2 border (top+bottom) + 2 padding (top+bottom).
+const modalChromeHeight = 4
 
 // defaultFieldWidth is the fallback input width used before the first
 // WindowSizeMsg has arrived. Once we know the terminal size, inputs
@@ -215,45 +220,106 @@ func (f *form) Title() string { return f.title }
 func (f *form) Init() tea.Cmd { return f.initCmd }
 
 func (f *form) View() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n\n", titleStyle.Render(f.title))
+	lines, focusStart, focusEnd := f.renderLines()
+	if f.height > 0 && len(lines) > f.height {
+		lines = clipAroundFocus(lines, focusStart, focusEnd, f.height)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderLines builds the full form view as a slice of terminal rows and
+// reports the [start, end) line range covered by the focused field, so
+// View() can window around it when the form is taller than the modal.
+func (f *form) renderLines() (lines []string, focusStart, focusEnd int) {
+	focusStart, focusEnd = -1, -1
+	lines = append(lines, strings.Split(titleStyle.Render(f.title), "\n")...)
+	lines = append(lines, "")
 	for i, fld := range f.fields {
+		start := len(lines)
 		marker := "  "
 		labelStyle := subtleStyle
 		if i == f.cursor {
 			marker = "▸ "
 			labelStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 		}
-		fmt.Fprintf(&b, "%s%s\n", marker, labelStyle.Render(fld.label))
+		lines = append(lines, marker+labelStyle.Render(fld.label))
+		body := "  " + fld.input.View()
 		if fld.multiline {
-			fmt.Fprintf(&b, "%s\n", fld.textarea.View())
-		} else {
-			fmt.Fprintf(&b, "  %s\n", fld.input.View())
+			body = fld.textarea.View()
 		}
+		lines = append(lines, strings.Split(body, "\n")...)
 		if i == f.cursor && fld.hint != "" {
-			fmt.Fprintf(&b, "  %s\n", helpStyle.Render(fld.hint))
+			lines = append(lines, "  "+helpStyle.Render(fld.hint))
 		}
-		b.WriteByte('\n')
+		if i == f.cursor {
+			focusStart, focusEnd = start, len(lines)
+		}
+		lines = append(lines, "")
 	}
 	if f.err != "" {
-		fmt.Fprintf(&b, "%s\n\n", flashErrorStyle.Render("error: "+f.err))
+		lines = append(lines, flashErrorStyle.Render("error: "+f.err), "")
+	}
+	help := "↑↓ field   enter next/submit   esc cancel"
+	if f.cursor < len(f.fields) && f.fields[f.cursor].multiline {
+		help = "tab field   enter newline   shift+enter/ctrl+s submit   esc cancel"
 	}
 	if f.busy {
-		fmt.Fprintf(&b, "%s\n", flashWarnStyle.Render("working…"))
+		lines = append(lines, flashWarnStyle.Render("working…"))
 	} else {
-		help := "↑↓ field   enter next/submit   esc cancel"
-		if f.cursor < len(f.fields) && f.fields[f.cursor].multiline {
-			help = "tab field   enter newline   shift+enter/ctrl+s submit   esc cancel"
-		}
-		fmt.Fprintf(&b, "%s\n", helpStyle.Render(help))
+		lines = append(lines, helpStyle.Render(help))
 	}
-	return b.String()
+	return
+}
+
+// clipAroundFocus returns a maxH-tall window of lines that includes the
+// [focusStart, focusEnd) range. When there is content above or below the
+// window, the boundary lines are replaced with "↑ N more" / "↓ N more"
+// indicators — unless doing so would hide the focused range, in which
+// case the indicator is skipped to keep the cursor visible.
+func clipAroundFocus(lines []string, focusStart, focusEnd, maxH int) []string {
+	n := len(lines)
+	if maxH <= 0 || n <= maxH {
+		return lines
+	}
+	if focusStart < 0 {
+		focusStart, focusEnd = 0, 1
+	}
+	focusH := focusEnd - focusStart
+	if focusH < 1 {
+		focusH = 1
+	}
+	// When the focused field is taller than the available window, pin
+	// the start to the field's label rather than centering — the label
+	// is the most important thing to keep on screen.
+	start := focusStart
+	if focusH < maxH {
+		start = focusStart - (maxH-focusH)/2
+	}
+	if start+maxH > n {
+		start = n - maxH
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxH
+	out := append([]string(nil), lines[start:end]...)
+	if start > 0 && focusStart > start {
+		out[0] = subtleStyle.Render(fmt.Sprintf("↑ %d more above", start))
+	}
+	if end < n && focusEnd <= end-1 {
+		out[len(out)-1] = subtleStyle.Render(fmt.Sprintf("↓ %d more below", n-end))
+	}
+	return out
 }
 
 func (f *form) Update(msg tea.Msg) (modal, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		f.width = msg.Width
+		f.height = msg.Height - modalChromeHeight
+		if f.height < 1 {
+			f.height = 1
+		}
 		w := fieldWidthFor(msg.Width)
 		for i := range f.fields {
 			f.fields[i].setWidth(w)

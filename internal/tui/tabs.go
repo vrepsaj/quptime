@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,9 +134,9 @@ func (c *checksTab) SelectedName() string {
 func (c *checksTab) Refresh(st transport.StatusResponse) {
 	rows := make([]table.Row, 0, len(st.Checks))
 	for _, ch := range st.Checks {
-		okTotal := lipgloss.NewStyle().Render("0/0")
+		okTotal := "0/0"
 		if ch.Total > 0 {
-			okTotal = lipgloss.NewStyle().Render(itoa(ch.OKCount) + "/" + itoa(ch.Total))
+			okTotal = strconv.Itoa(ch.OKCount) + "/" + strconv.Itoa(ch.Total)
 		}
 		alerts := strings.Join(ch.Alerts, ",")
 		if alerts == "" {
@@ -253,29 +254,6 @@ func livenessText(live bool) string {
 		return "live"
 	}
 	return "dead"
-}
-
-func itoa(i int) string {
-	// avoid pulling fmt in the hot path of refresh
-	if i == 0 {
-		return "0"
-	}
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }
 
 func truncate(s string, max int) string {
