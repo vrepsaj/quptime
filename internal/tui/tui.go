@@ -196,18 +196,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Pass through to the active tab so j/k/PgUp/PgDn scroll the table.
-	switch m.active {
-	case tabPeers:
-		_, cmd := m.peers.Update(msg)
-		return m, cmd
-	case tabChecks:
-		_, cmd := m.checks.Update(msg)
-		return m, cmd
-	case tabAlerts:
-		_, cmd := m.alertsT.Update(msg)
-		return m, cmd
-	}
-	return m, nil
+	return m, m.forwardToActiveTab(msg)
 }
 
 func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -220,14 +209,8 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "left", "H":
 		m.active = (m.active + 2) % 3
 		return m, tea.ClearScreen
-	case "1":
-		m.active = tabPeers
-		return m, tea.ClearScreen
-	case "2":
-		m.active = tabChecks
-		return m, tea.ClearScreen
-	case "3":
-		m.active = tabAlerts
+	case "1", "2", "3":
+		m.active = tabIndex(km.String()[0] - '1')
 		return m, tea.ClearScreen
 	case "r":
 		m.setFlash("refreshing…", flashInfo)
@@ -253,18 +236,23 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward everything else (arrow keys etc.) to the active tab.
+	return m, m.forwardToActiveTab(km)
+}
+
+// forwardToActiveTab passes msg to whichever tab is currently focused.
+// Used for both arbitrary tea.Msg pass-through (mouse, ticks) and for
+// keys handleKey didn't claim.
+func (m model) forwardToActiveTab(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
 	switch m.active {
 	case tabPeers:
-		_, cmd := m.peers.Update(km)
-		return m, cmd
+		_, cmd = m.peers.Update(msg)
 	case tabChecks:
-		_, cmd := m.checks.Update(km)
-		return m, cmd
+		_, cmd = m.checks.Update(msg)
 	case tabAlerts:
-		_, cmd := m.alertsT.Update(km)
-		return m, cmd
+		_, cmd = m.alertsT.Update(msg)
 	}
-	return m, nil
+	return cmd
 }
 
 // =============================================================
@@ -700,11 +688,15 @@ func (m *model) setFlash(s string, level flashLevel) {
 
 func (m *model) resizeTabs() {
 	// Rows consumed outside the body: header (variable), tabs (1),
-	// body's own rounded border (2), flash (1), help (1).
+	// body's own rounded border (2), flash (1), help (1). On terminals
+	// too small to honor the reservation, shrink the body all the way
+	// down to 1 row rather than letting the page overflow — the table
+	// will collapse to a single visible row but the rest of the chrome
+	// stays on screen.
 	reserved := m.headerHeight() + 5
 	bodyH := m.height - reserved
-	if bodyH < 5 {
-		bodyH = 5
+	if bodyH < 1 {
+		bodyH = 1
 	}
 	bodyW := m.width - 4
 	if bodyW < 20 {
