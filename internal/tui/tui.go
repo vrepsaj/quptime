@@ -233,6 +233,13 @@ func (m model) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.active == tabAlerts {
 			return m.toggleSelectedDefault()
 		}
+	case "x":
+		switch m.active {
+		case tabChecks:
+			return m.toggleSelectedCheckEnabled()
+		case tabAlerts:
+			return m.toggleSelectedAlertEnabled()
+		}
 	}
 
 	// Forward everything else (arrow keys etc.) to the active tab.
@@ -413,9 +420,9 @@ func (m model) renderHelp() string {
 	case tabPeers:
 		specific = "a add  e edit  d remove"
 	case tabChecks:
-		specific = "a add  e edit  d remove  t test"
+		specific = "a add  e edit  d remove  t test  x toggle on/off"
 	case tabAlerts:
-		specific = "a add  e edit  d remove  t test  D toggle default"
+		specific = "a add  e edit  d remove  t test  D toggle default  x toggle on/off"
 	}
 	return helpStyle.Render(fmt.Sprintf("↑↓ navigate   ⇥ next tab   1/2/3 jump   r refresh   %s   q quit", specific))
 }
@@ -644,6 +651,68 @@ func (m model) testSelectedAlert() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m model) toggleSelectedCheckEnabled() (tea.Model, tea.Cmd) {
+	id := m.checks.Selected()
+	if id == "" {
+		return m, nil
+	}
+	var target *config.Check
+	for i := range m.checksFull {
+		if m.checksFull[i].ID == id {
+			cp := m.checksFull[i]
+			target = &cp
+			break
+		}
+	}
+	if target == nil {
+		m.setFlash("check not found in local cluster.yaml", flashError)
+		return m, nil
+	}
+	target.Disabled = !target.Disabled
+	name := target.Name
+	verb := "enabled"
+	if target.Disabled {
+		verb = "disabled"
+	}
+	return m, func() tea.Msg {
+		if err := mutateAdd(transport.MutationAddCheck, target); err != nil {
+			return modalDone{flash: "toggle failed: " + err.Error(), level: flashError}
+		}
+		return modalDone{flash: fmt.Sprintf("check %s %s", name, verb), level: flashInfo}
+	}
+}
+
+func (m model) toggleSelectedAlertEnabled() (tea.Model, tea.Cmd) {
+	id := m.alertsT.Selected()
+	if id == "" {
+		return m, nil
+	}
+	var target *config.Alert
+	for i := range m.alerts {
+		if m.alerts[i].ID == id {
+			cp := m.alerts[i]
+			target = &cp
+			break
+		}
+	}
+	if target == nil {
+		m.setFlash("alert not found in local cluster.yaml", flashError)
+		return m, nil
+	}
+	target.Disabled = !target.Disabled
+	name := target.Name
+	verb := "enabled"
+	if target.Disabled {
+		verb = "disabled"
+	}
+	return m, func() tea.Msg {
+		if err := mutateAdd(transport.MutationAddAlert, target); err != nil {
+			return modalDone{flash: "toggle failed: " + err.Error(), level: flashError}
+		}
+		return modalDone{flash: fmt.Sprintf("alert %s %s", name, verb), level: flashInfo}
+	}
+}
+
 func (m model) toggleSelectedDefault() (tea.Model, tea.Cmd) {
 	row := m.alertsT.SelectedAlert()
 	if row == nil {
@@ -721,6 +790,7 @@ func toAlertRows(alerts []config.Alert) []alertRow {
 			ID:       a.ID,
 			Name:     a.Name,
 			Type:     string(a.Type),
+			Enabled:  !a.Disabled,
 			Default:  a.Default,
 			HasTmpl:  a.SubjectTemplate != "" || a.BodyTemplate != "",
 			Endpoint: endpoint,

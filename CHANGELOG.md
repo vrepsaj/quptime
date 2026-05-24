@@ -10,6 +10,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - New documented deployment methods for Tailscale and EdgeVPN, with example `docker-compose.yml` files and wrapper scripts in `docker/tailscale/` and `docker/edgevpn/`.
 - New builder command `qu builder`, which generates a standalone HTML alert-template builder
+- **Pause checks and alerts without deleting them.** Both `Check` and
+  `Alert` carry a new `disabled` (yaml `disabled,omitempty`) field.
+  Disabled checks are skipped by the scheduler — their workers are
+  cancelled on the next reconcile pass — so no probes run and the
+  aggregator stops receiving fresh results. Disabled alerts are
+  filtered out by `EffectiveAlertsFor` before the dispatcher sees
+  them, so they neither fire on transitions nor count toward the
+  `default: true` attachment set. Toggle from the CLI with
+  `qu check enable|disable <id-or-name>` and
+  `qu alert enable|disable <id-or-name>`; from the TUI, `x` on the
+  Checks or Alerts tab. `qu check list` / `qu status` mark disabled
+  checks with `(disabled)` in the STATE column, `qu alert list`
+  gained an `ENABLED` column, and the TUI Checks / Alerts tabs gained
+  an `ON` column. The field is stored as the negation of "enabled"
+  so the zero value of new and existing entries stays enabled — no
+  migration needed.
 
 ### Changed
 

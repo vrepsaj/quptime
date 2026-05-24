@@ -25,6 +25,7 @@ trust — no central CA, no shared secret.
   - [Set up a 3-node cluster](#set-up-a-3-node-cluster)
   - [Adding checks and alerts](#adding-checks-and-alerts)
   - [Default alerts (attach to every check)](#default-alerts-attach-to-every-check)
+  - [Pause checks and alerts without deleting them](#pause-checks-and-alerts-without-deleting-them)
   - [Interactive TUI](#interactive-tui)
   - [Custom alert messages](#custom-alert-messages)
     - [Conditionals, pipelines, and worked examples](#conditionals-pipelines-and-worked-examples)
@@ -269,11 +270,12 @@ were attached automatically vs explicitly listed on the check:
 
 ```
 CHECKS
-ID        NAME      STATE  OK/TOTAL  ALERTS         DETAIL
-ddbd...   homepage  up     3/3       oncall,ops*    
-0006...   db        down   1/3       ops*           dial timeout
-24f4...   gateway   up     3/3       -              
-(alerts marked * are attached as defaults)
+ID        NAME      STATE             OK/TOTAL  ALERTS         DETAIL
+ddbd...   homepage  up                3/3       oncall,ops*    
+0006...   db        down              1/3       ops*           dial timeout
+24f4...   gateway   up                3/3       -              
+b8e2...   nightly   (disabled) up     0/0       ops*           
+(alerts marked * are attached as defaults; "(disabled)" checks are paused — see `qu check enable`)
 ```
 
 ## Default alerts (attach to every check)
@@ -295,6 +297,30 @@ specific default by adding the alert's ID or name to its
 `suppress_alert_ids` list in `cluster.yaml` (see "Edit cluster.yaml
 directly" below).
 
+## Pause checks and alerts without deleting them
+
+Both checks and alerts carry a `disabled` flag. A disabled check is
+skipped by the scheduler (no probes are fired and no per-node results
+arrive at the aggregator) and a disabled alert is filtered out of the
+effective alert list (it neither fires on transitions nor counts as a
+default attachment). Useful for planned maintenance, hush-during-a-known-outage, or temporarily silencing a noisy channel without
+losing its configuration.
+
+```sh
+qu check disable homepage      # stop probing
+qu check enable  homepage      # resume
+
+qu alert disable oncall        # silence the channel
+qu alert enable  oncall        # bring it back
+
+qu check list                  # disabled checks show "(disabled) <state>"
+qu alert list                  # ENABLED column shows true/false
+```
+
+Toggling is a regular cluster mutation: it routes through the master
+and replicates like any other edit. In the TUI, `x` on the Checks or
+Alerts tab toggles the selected row.
+
 ## Interactive TUI
 
 Prefer a dashboard over typing commands? `qu tui` opens a full-screen
@@ -307,12 +333,12 @@ every two seconds.
 ┌─ QUptime ── node: 88a00af9   master: 3438fd6f   (follower)  ● quorum 3/2  term 4   ver 10 ──┐
 │ Peers (3)   [2] Checks (3)   [3] Alerts (1)                                                  │
 ├──────────────────────────────────────────────────────────────────────────────────────────────┤
-│ ID         NAME      STATE     OK/TOTAL  ALERTS    DETAIL                                    │
-│ ddbd...    homepage  ● up      3/3       oncall*                                             │
-│ 0006...    db        ● down    1/3       oncall*   dial timeout                              │
-│ 24f4...    gateway   ○ unknown 0/0       -                                                   │
+│ ID         NAME      ON   STATE     OK/TOTAL  ALERTS    DETAIL                               │
+│ ddbd...    homepage  yes  ● up      3/3       oncall*                                        │
+│ 0006...    db        yes  ● down    1/3       oncall*   dial timeout                         │
+│ 24f4...    gateway   no   ○ unknown 0/0       -                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
-↑↓ navigate   ⇥ next tab   1/2/3 jump   r refresh   a add check  d remove check   q quit
+↑↓ navigate   ⇥ next tab   1/2/3 jump   r refresh   a add  d remove  e edit  t test  x on/off  q quit
 ```
 
 Keybindings:
@@ -326,6 +352,7 @@ Keybindings:
 | `a`                 | add (opens a picker on Checks/Alerts; node form on Peers)                                  |
 | `d`                 | remove the selected row (confirmation prompt)                                              |
 | `t`                 | fire a test transition: synthetic test message on Alerts; pick down/up/recovered on Checks |
+| `x`                 | toggle the selected check / alert on or off (pauses the row without deleting it)           |
 | `D`                 | toggle the selected alert's `default` flag                                                 |
 | `q` / `Ctrl+C`      | quit                                                                                       |
 
@@ -565,11 +592,15 @@ qu check add icmp  <name> <host>
 qu check add tls   <name> <host[:port]>          [--warn-days 14] [--sni name]
 qu check add dns   <name> <hostname>             [--record a|aaaa|cname|mx|txt|ns] [--resolver host:port] [--expect substr]
 qu check list
-qu check remove <id-or-name>
-qu check test   <id-or-name> [--state down|up|recovered]  fire a synthetic transition to exercise alert templates
+qu check remove  <id-or-name>
+qu check enable  <id-or-name>                   resume probing a previously disabled check
+qu check disable <id-or-name>                   stop probing without deleting the check
+qu check test    <id-or-name> [--state down|up|recovered]  fire a synthetic transition to exercise alert templates
 qu alert add smtp    <name> --host … --port … --from … --to … [--user --password --starttls] [--default] [--subject … --body …]
 qu alert add discord <name> --webhook …                                                        [--default] [--body …]
 qu alert list / remove / test <id-or-name>
+qu alert enable  <id-or-name>                   resume firing a previously disabled alert
+qu alert disable <id-or-name>                   silence an alert without deleting it
 qu alert default <id-or-name> on|off            toggle default attachment to every check
 qu trust list / remove <node-id>
 qu update [--check] [--force] [--source gitea|github] [--beta]   replace this binary with the latest release
