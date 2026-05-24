@@ -73,9 +73,9 @@ func addAlertCmd(root *cobra.Command) {
 				return err
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tTYPE\tDEFAULT\tNAME")
+			fmt.Fprintln(tw, "ID\tTYPE\tENABLED\tDEFAULT\tNAME")
 			for _, a := range cluster.Alerts {
-				fmt.Fprintf(tw, "%s\t%s\t%v\t%s\n", a.ID, a.Type, a.Default, a.Name)
+				fmt.Fprintf(tw, "%s\t%s\t%v\t%v\t%s\n", a.ID, a.Type, !a.Disabled, a.Default, a.Name)
 			}
 			return tw.Flush()
 		},
@@ -156,8 +156,56 @@ func addAlertCmd(root *cobra.Command) {
 		},
 	}
 
-	alert.AddCommand(addParent, listCmd, removeCmd, testCmd, defaultCmd, buildAlertEditCmd())
+	enableCmd := buildAlertToggleCmd("enable", false,
+		"Re-enable a silenced alert so it fires on transitions again")
+	disableCmd := buildAlertToggleCmd("disable", true,
+		"Silence an alert: it stops firing on transitions and is dropped from defaults")
+
+	alert.AddCommand(addParent, listCmd, removeCmd, testCmd, defaultCmd, enableCmd, disableCmd, buildAlertEditCmd())
 	root.AddCommand(alert)
+}
+
+// buildAlertToggleCmd returns the `qu alert enable|disable` subcommand.
+// Both share an implementation: look up the alert, flip Disabled, and
+// re-submit it through the standard AddAlert mutation (which replaces
+// any existing entry with matching ID).
+func buildAlertToggleCmd(use string, disabled bool, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use + " <id-or-name>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			cluster, err := config.LoadClusterConfig()
+			if err != nil {
+				return err
+			}
+			existing := cluster.FindAlert(args[0])
+			if existing == nil {
+				return fmt.Errorf("no alert named %q", args[0])
+			}
+			if existing.Disabled == disabled {
+				fmt.Fprintf(cmd.OutOrStdout(), "alert %s already %sd\n", existing.Name, use)
+				return nil
+			}
+			existing.Disabled = disabled
+			payload, err := json.Marshal(existing)
+			if err != nil {
+				return err
+			}
+			body := daemon.MutateBody{Kind: transport.MutationAddAlert, Payload: payload}
+			raw, err := callDaemon(ctx, daemon.CtrlMutate, body)
+			if err != nil {
+				return err
+			}
+			var res daemon.MutateResult
+			_ = json.Unmarshal(raw, &res)
+			fmt.Fprintf(cmd.OutOrStdout(), "%sd alert %s (cluster version now %d)\n",
+				use, existing.Name, res.Version)
+			return nil
+		},
+	}
 }
 
 // buildAlertEditCmd returns `qu alert edit`, which updates fields of an

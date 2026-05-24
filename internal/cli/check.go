@@ -131,8 +131,63 @@ Default is --state down, the transition most worth exercising.`,
 	}
 	testCmd.Flags().String("state", "down", "synthetic transition to render: down|up|recovered")
 
-	check.AddCommand(addParent, listCmd, removeCmd, testCmd, buildCheckEditCmd())
+	enableCmd := buildCheckToggleCmd("enable", false,
+		"Re-enable a paused check so the scheduler probes it again")
+	disableCmd := buildCheckToggleCmd("disable", true,
+		"Pause a check: the scheduler stops probing it and no alerts fire from its state")
+
+	check.AddCommand(addParent, listCmd, removeCmd, testCmd, enableCmd, disableCmd, buildCheckEditCmd())
 	root.AddCommand(check)
+}
+
+// buildCheckToggleCmd returns the `qu check enable|disable` subcommand.
+// Both share an implementation: look up the check, flip Disabled, and
+// re-submit it through the standard AddCheck mutation (which replaces
+// any existing entry with matching ID).
+func buildCheckToggleCmd(use string, disabled bool, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use + " <id-or-name>",
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+			defer cancel()
+			cluster, err := config.LoadClusterConfig()
+			if err != nil {
+				return err
+			}
+			var existing *config.Check
+			for i := range cluster.Checks {
+				if cluster.Checks[i].ID == args[0] || cluster.Checks[i].Name == args[0] {
+					cp := cluster.Checks[i]
+					existing = &cp
+					break
+				}
+			}
+			if existing == nil {
+				return fmt.Errorf("no check named %q", args[0])
+			}
+			if existing.Disabled == disabled {
+				fmt.Fprintf(cmd.OutOrStdout(), "check %s already %sd\n", existing.Name, use)
+				return nil
+			}
+			existing.Disabled = disabled
+			payload, err := json.Marshal(existing)
+			if err != nil {
+				return err
+			}
+			body := daemon.MutateBody{Kind: transport.MutationAddCheck, Payload: payload}
+			raw, err := callDaemon(ctx, daemon.CtrlMutate, body)
+			if err != nil {
+				return err
+			}
+			var res daemon.MutateResult
+			_ = json.Unmarshal(raw, &res)
+			fmt.Fprintf(cmd.OutOrStdout(), "%sd check %s (cluster version now %d)\n",
+				use, existing.Name, res.Version)
+			return nil
+		},
+	}
 }
 
 // normaliseTestState mirrors the dispatcher's parsing so the CLI's

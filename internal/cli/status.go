@@ -73,7 +73,7 @@ func runStatusPrint(ctx context.Context, cmd *cobra.Command, peersOnly bool) err
 	fmt.Fprintln(tw2, "ID\tNAME\tSTATE\tOK/TOTAL\tALERTS\tDETAIL")
 	for _, c := range st.Checks {
 		fmt.Fprintf(tw2, "%s\t%s\t%s\t%d/%d\t%s\t%s\n",
-			c.CheckID, c.Name, c.State, c.OKCount, c.Total,
+			c.CheckID, c.Name, stateCol(c.State, c.Disabled), c.OKCount, c.Total,
 			alertsCol(c.Alerts), c.Detail)
 	}
 	if err := tw2.Flush(); err != nil {
@@ -81,6 +81,16 @@ func runStatusPrint(ctx context.Context, cmd *cobra.Command, peersOnly bool) err
 	}
 	fmt.Fprintln(out, "(alerts marked * are attached as defaults)")
 	return nil
+}
+
+// stateCol prepends "(disabled) " to a check's runtime state when the
+// operator has paused it, so list and status outputs surface the paused
+// status without adding a separate column.
+func stateCol(state string, disabled bool) string {
+	if disabled {
+		return "(disabled) " + state
+	}
+	return state
 }
 
 func alertsCol(names []string) string {
@@ -106,7 +116,7 @@ func runStatusPrintChecks(ctx context.Context, cmd *cobra.Command) error {
 	fmt.Fprintln(tw, "ID\tNAME\tSTATE\tOK/TOTAL\tALERTS\tDETAIL")
 	for _, c := range st.Checks {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d/%d\t%s\t%s\n",
-			c.CheckID, c.Name, c.State, c.OKCount, c.Total,
+			c.CheckID, c.Name, stateCol(c.State, c.Disabled), c.OKCount, c.Total,
 			alertsCol(c.Alerts), c.Detail)
 	}
 	return tw.Flush()

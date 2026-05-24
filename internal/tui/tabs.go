@@ -92,6 +92,7 @@ func newChecksTab() *checksTab {
 	cols := []table.Column{
 		{Title: "ID", Width: 38},
 		{Title: "NAME", Width: 18},
+		{Title: "ON", Width: 4},
 		{Title: "STATE", Width: 12},
 		{Title: "OK/TOTAL", Width: 10},
 		{Title: "ALERTS", Width: 24},
@@ -143,7 +144,7 @@ func (c *checksTab) Refresh(st transport.StatusResponse) {
 			alerts = "-"
 		}
 		rows = append(rows, table.Row{
-			ch.CheckID, ch.Name, renderState(ch.State), okTotal, alerts, truncate(ch.Detail, 38),
+			ch.CheckID, ch.Name, enabledCol(!ch.Disabled), renderState(ch.State), okTotal, alerts, truncate(ch.Detail, 38),
 		})
 	}
 	c.tbl.SetRows(rows)
@@ -159,6 +160,7 @@ type alertRow struct {
 	ID       string
 	Name     string
 	Type     string
+	Enabled  bool
 	Default  bool
 	HasTmpl  bool
 	Endpoint string
@@ -168,6 +170,7 @@ func newAlertsTab() *alertsTab {
 	cols := []table.Column{
 		{Title: "ID", Width: 38},
 		{Title: "NAME", Width: 16},
+		{Title: "ON", Width: 4},
 		{Title: "TYPE", Width: 10},
 		{Title: "DEFAULT", Width: 8},
 		{Title: "CUSTOM-MSG", Width: 11},
@@ -230,7 +233,7 @@ func (a *alertsTab) Refresh(alerts []alertRow) {
 		if r.HasTmpl {
 			tmpl = "yes"
 		}
-		rows = append(rows, table.Row{r.ID, r.Name, r.Type, def, tmpl, truncate(r.Endpoint, 34)})
+		rows = append(rows, table.Row{r.ID, r.Name, enabledCol(r.Enabled), r.Type, def, tmpl, truncate(r.Endpoint, 34)})
 	}
 	a.tbl.SetRows(rows)
 }
@@ -254,6 +257,15 @@ func livenessText(live bool) string {
 		return "live"
 	}
 	return "dead"
+}
+
+// enabledCol renders the boolean enabled flag as a compact glyph for the
+// "ON" column shared by the checks and alerts tabs.
+func enabledCol(enabled bool) string {
+	if enabled {
+		return "yes"
+	}
+	return "no"
 }
 
 func truncate(s string, max int) string {
