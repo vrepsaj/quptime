@@ -54,6 +54,38 @@ Within a single minor version, downgrade is symmetrical with upgrade.
   within ~1 heartbeat. Don't pre-emptively delete its `cluster.yaml`
   — let the catch-up path handle it.
 
+## Pausing checks and alerts for maintenance
+
+Take a check or an alert out of rotation without deleting it. The flag
+is replicated cluster-wide, so flipping it on any node is enough:
+
+```sh
+# planned outage on a backend you also monitor — silence both the probe
+# and the channel so on-call stays quiet:
+sudo -u quptime qu check disable db
+sudo -u quptime qu alert disable oncall
+
+# bring everything back when the window closes:
+sudo -u quptime qu check enable db
+sudo -u quptime qu alert enable oncall
+```
+
+A disabled check has its scheduler worker cancelled within one
+reconcile interval (≤ 5s) and stops contributing fresh per-node
+results to the aggregator; its existing committed state ages out
+naturally as the freshness window expires. A disabled alert is
+filtered out of every check's effective alert list, so it neither
+fires on transitions nor counts toward the `default: true`
+attachment set.
+
+Prefer this over `qu check remove` / `qu alert remove` when you plan
+to re-enable later — disable keeps the configuration (templates,
+suppress lists, history) intact, while remove forces you to recreate
+it. `qu check list` shows `(disabled) <state>` and `qu alert list`
+has an `ENABLED` column so the paused entries are obvious. In the
+TUI, the `ON` column on the Checks / Alerts tabs surfaces the same;
+`x` toggles the selected row.
+
 ## Backups
 
 Three files matter, in descending order of "pain if lost":
