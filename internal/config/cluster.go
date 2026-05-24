@@ -77,6 +77,13 @@ type Check struct {
 
 	// SuppressAlertIDs lets a check opt out of specific default alerts.
 	SuppressAlertIDs []string `yaml:"suppress_alert_ids,omitempty"`
+
+	// Disabled pauses the check: the scheduler skips probing it and the
+	// aggregator naturally falls quiet as the existing per-node results
+	// age out. Stored as the negation of "enabled" so the zero value of
+	// a freshly-added check is enabled, and existing cluster.yaml files
+	// without the field continue to behave as before.
+	Disabled bool `yaml:"disabled,omitempty"`
 }
 
 // AlertType enumerates supported notifier kinds.
@@ -97,6 +104,11 @@ type Alert struct {
 	// of any explicit AlertIDs the check lists. A check that wants to
 	// opt out of a default alert can list it under SuppressAlertIDs.
 	Default bool `yaml:"default,omitempty"`
+
+	// Disabled silences the alert: EffectiveAlertsFor filters it out so
+	// it neither fires on transitions nor counts as a default attachment.
+	// Stored as the negation of "enabled" so the zero value is enabled.
+	Disabled bool `yaml:"disabled,omitempty"`
 
 	// SMTP options.
 	SMTPHost     string   `yaml:"smtp_host,omitempty"`
@@ -383,6 +395,9 @@ func (c *ClusterConfig) EffectiveAlertsFor(check *Check) []Alert {
 	var out []Alert
 
 	add := func(a Alert) {
+		if a.Disabled {
+			return
+		}
 		if _, dup := seen[a.ID]; dup {
 			return
 		}

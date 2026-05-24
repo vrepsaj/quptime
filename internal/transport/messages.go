@@ -289,12 +289,13 @@ type PeerLiveness struct {
 
 // CheckSnapshot is the aggregate state of one configured check.
 type CheckSnapshot struct {
-	CheckID string `json:"check_id"`
-	Name    string `json:"name"`
-	State   string `json:"state"` // "up", "down", "unknown"
-	OKCount int    `json:"ok_count"`
-	Total   int    `json:"total"`
-	Detail  string `json:"detail,omitempty"`
+	CheckID  string `json:"check_id"`
+	Name     string `json:"name"`
+	State    string `json:"state"` // "up", "down", "unknown"
+	OKCount  int    `json:"ok_count"`
+	Total    int    `json:"total"`
+	Detail   string `json:"detail,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
 	// Alerts holds one display string per effective alert. Names of
 	// default-attached alerts are suffixed with "*" so the operator can
 	// see which fired without lookup.
