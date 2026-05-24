@@ -223,6 +223,7 @@ and adds it to the local trust store. See
   dns_expect: ""          # dns only; substring required in an answer
   alert_ids: [oncall]     # alerts attached explicitly
   suppress_alert_ids: []  # opt out of specific default alerts
+  disabled: false         # when true, the scheduler skips probing this check
 ```
 
 Defaults:
@@ -233,6 +234,12 @@ Defaults:
   must match exactly.
 - `tls_warn_days`: 14
 - `dns_record`: `a`
+- `disabled`: `false` (omitted from `cluster.yaml` when false). When
+  `true`, the scheduler stops probing the check — its worker is
+  cancelled on the next reconcile pass and its existing per-node
+  results age out of the aggregator without triggering a transition.
+  Toggle from the CLI with `qu check enable|disable <id-or-name>` or
+  from the TUI with `x` on the Checks tab.
 
 ICMP checks default to **unprivileged UDP-mode pings** so the daemon
 does not need root. For raw ICMP, grant the capability — see
@@ -259,6 +266,7 @@ Two notifier kinds, distinguished by `type`:
   name: oncall
   type: discord
   default: true              # attach to every check automatically
+  disabled: false            # when true, the dispatcher drops this alert entirely
   discord_webhook: https://...
   body_template: |           # optional Go text/template override
     {{.Check.Name}} is {{.Verb}}
@@ -278,6 +286,13 @@ Two notifier kinds, distinguished by `type`:
   body_template: |
     Check {{.Check.Name}} ({{.Check.Target}}) is now {{.Verb}}.
 ```
+
+The `disabled` field is `omitempty` and defaults to `false`. When
+`true`, `EffectiveAlertsFor` filters the alert out before the
+dispatcher sees it — it does not fire on transitions and is dropped
+from the default-attach set, regardless of `default: true`. Toggle
+from the CLI with `qu alert enable|disable <id-or-name>` or from the
+TUI with `x` on the Alerts tab.
 
 If `default: true`, the alert fires for every check unless the check
 lists the alert's ID or name in `suppress_alert_ids`. Otherwise the
@@ -426,11 +441,15 @@ generic version that prints `Target` plus the `Type` tag — see the
 For each check, the dispatcher computes the effective alert list as:
 
 ```
-( explicit alert_ids ∪ alerts with default=true ) \ suppress_alert_ids
+( explicit alert_ids ∪ alerts with default=true ) \ suppress_alert_ids \ disabled alerts
 ```
 
 de-duplicated by alert ID. So a check can both opt in to specific
-alerts and opt out of specific defaults.
+alerts and opt out of specific defaults; alerts with `disabled: true`
+are removed unconditionally and never appear in any check's effective
+list. A check with `disabled: true` is never probed, so its
+aggregator state goes stale and no transitions are ever computed for
+it — the alert list above is moot for disabled checks.
 
 ## `trust.yaml` — local trust store
 

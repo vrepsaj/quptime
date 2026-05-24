@@ -67,6 +67,8 @@ Possible causes:
   interval). Probably means probes are timing out without reporting.
 - This is a follower's view; the aggregator runs on the master only.
   Check `qu status` on the master to see the canonical view.
+- The check is disabled. `qu check list` will show `(disabled) <state>`
+  in the STATE column. Re-enable with `qu check enable <id-or-name>`.
 
 ## Alerts not firing
 
@@ -74,13 +76,18 @@ Walk this list in order; one of them will catch it:
 
 1. **Is there quorum?** Aggregator runs on master only. No master →
    no transitions → no alerts.
-2. **Is the alert attached to the check?** `qu status` shows the
+2. **Is the check or the alert disabled?** A check with
+   `disabled: true` is never probed (no transitions, no alerts). An
+   alert with `disabled: true` is filtered out of every check's
+   effective alert list. `qu check list` and `qu alert list` make
+   both visible; re-enable with `qu check enable` / `qu alert enable`.
+3. **Is the alert attached to the check?** `qu status` shows the
    effective alert list per check. Empty → no alert. Confirm with
    `qu alert list` that the alert exists and (if relying on default
    attachment) has `default: true`.
-3. **Is the alert suppressed on this check?** Check
+4. **Is the alert suppressed on this check?** Check
    `suppress_alert_ids` in `cluster.yaml`.
-4. **Test the alert path directly:**
+5. **Test the alert path directly:**
 
    ```sh
    sudo -u quptime qu alert test <name>
@@ -90,7 +97,7 @@ Walk this list in order; one of them will catch it:
    If `alert test` doesn't deliver, the problem is the notifier
    config or the template — see below. If `alert test` works but real
    transitions don't, the aggregator isn't observing the transition.
-5. **Has the check actually transitioned?** Aggregator commits a flip
+6. **Has the check actually transitioned?** Aggregator commits a flip
    only after **two consecutive** evaluations agree. A bouncing
    target may never satisfy the hysteresis. Lower the check interval
    or increase reliability of the target.

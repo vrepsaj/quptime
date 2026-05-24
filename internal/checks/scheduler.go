@@ -67,7 +67,7 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 	snap := s.cluster.Snapshot()
 	want := map[string]config.Check{}
 	for _, c := range snap.Checks {
-		if c.ID == "" {
+		if c.ID == "" || c.Disabled {
 			continue
 		}
 		want[c.ID] = c

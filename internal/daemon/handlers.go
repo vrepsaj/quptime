@@ -310,7 +310,7 @@ func (d *Daemon) buildStatus() transport.StatusResponse {
 	}
 	for _, c := range snap.Checks {
 		check := c
-		cs := transport.CheckSnapshot{CheckID: c.ID, Name: c.Name, State: "unknown"}
+		cs := transport.CheckSnapshot{CheckID: c.ID, Name: c.Name, State: "unknown", Disabled: c.Disabled}
 		if agg, ok := d.aggregator.SnapshotFor(c.ID); ok {
 			cs.State = string(agg.State)
 			cs.OKCount = agg.OKCount
