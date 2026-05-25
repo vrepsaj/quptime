@@ -274,6 +274,16 @@ all other fields are preserved from the existing record. HTTP-only flags
 					}
 				}
 			}
+			if f.Changed("resolvers") {
+				rs, _ := f.GetStringSlice("resolvers")
+				existing.Resolvers = nil
+				for _, r := range rs {
+					r = strings.TrimSpace(r)
+					if r != "" {
+						existing.Resolvers = append(existing.Resolvers, r)
+					}
+				}
+			}
 			if f.Changed("expect") {
 				v, _ := f.GetString("expect")
 				switch existing.Type {
@@ -345,6 +355,7 @@ all other fields are preserved from the existing record. HTTP-only flags
 	cmd.Flags().String("interval", "", "new probe interval (e.g. 30s, 1m)")
 	cmd.Flags().String("timeout", "", "new per-probe timeout (e.g. 10s)")
 	cmd.Flags().String("alerts", "", "replace alert list with this CSV of IDs/names (pass empty to clear)")
+	cmd.Flags().StringSlice("resolvers", nil, "replace the resolver list (e.g. --resolvers 1.1.1.1,1.0.0.1). Pass --resolvers '' to clear and fall back to the cluster default.")
 	cmd.Flags().String("expect", "", "HTTP: expected status code; DNS: substring required in an answer")
 	cmd.Flags().String("body-match", "", "substring required in body (HTTP only)")
 	cmd.Flags().Int("warn-days", 0, "TLS: fail when cert expires within this many days")
@@ -418,6 +429,14 @@ func buildAddCheckCmd(ctype config.CheckType, use, argSpec, short string,
 					}
 				}
 			}
+			if resolvers, _ := cmd.Flags().GetStringSlice("resolvers"); len(resolvers) > 0 {
+				for _, r := range resolvers {
+					r = strings.TrimSpace(r)
+					if r != "" {
+						ch.Resolvers = append(ch.Resolvers, r)
+					}
+				}
+			}
 			if ctype == config.CheckHTTP {
 				es, _ := cmd.Flags().GetInt("expect")
 				bm, _ := cmd.Flags().GetString("body-match")
@@ -463,4 +482,5 @@ func bindCheckFlags(cmd *cobra.Command) {
 	cmd.Flags().String("interval", "30s", "probe interval")
 	cmd.Flags().String("timeout", "10s", "per-probe timeout")
 	cmd.Flags().String("alerts", "", "comma-separated alert IDs/names to notify on transition")
+	cmd.Flags().StringSlice("resolvers", nil, "DNS servers to resolve this check's target (e.g. 1.1.1.1,1.0.0.1). Bypasses the host's resolver cache. Tried in order with connection-level failover. Empty = use the cluster default (qu cluster resolvers show).")
 }

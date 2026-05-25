@@ -29,5 +29,6 @@ func NewRootCommand(version string) *cobra.Command {
 	addTUICmd(root)
 	addUpdateCmd(root)
 	addBuilderCmd(root)
+	addClusterCmd(root)
 	return root
 }

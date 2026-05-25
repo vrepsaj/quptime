@@ -26,16 +26,11 @@ func (dnsProber) Probe(ctx context.Context, c *config.Check) Result {
 		record = "a"
 	}
 
-	resolver := net.DefaultResolver
-	if r := strings.TrimSpace(c.DNSResolver); r != "" {
-		resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(dctx context.Context, network, _ string) (net.Conn, error) {
-				d := net.Dialer{Timeout: c.Timeout}
-				return d.DialContext(dctx, network, r)
-			},
-		}
-	}
+	// DNS-check resolver precedence: per-check Resolvers list → cluster
+	// default (resolved upstream in the scheduler, baked into
+	// c.Resolvers) → legacy single-value DNSResolver → system resolver.
+	// resolverForCheck threads that precedence already.
+	resolver := resolverForCheck(c)
 
 	start := time.Now()
 	answers, err := lookupRecord(ctx, resolver, record, host)

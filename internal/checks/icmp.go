@@ -17,7 +17,11 @@ type icmpProber struct{}
 // who can grant the cap (or run as root) get raw ICMP automatically.
 func (icmpProber) Probe(ctx context.Context, c *config.Check) Result {
 	start := time.Now()
-	pinger, err := probing.NewPinger(c.Target)
+	target, err := resolveOne(ctx, c, c.Target)
+	if err != nil {
+		return Result{OK: false, Detail: "resolve: " + err.Error()}
+	}
+	pinger, err := probing.NewPinger(target)
 	if err != nil {
 		return Result{OK: false, Detail: "resolve: " + err.Error()}
 	}

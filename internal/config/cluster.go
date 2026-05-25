@@ -84,6 +84,21 @@ type Check struct {
 	// a freshly-added check is enabled, and existing cluster.yaml files
 	// without the field continue to behave as before.
 	Disabled bool `yaml:"disabled,omitempty"`
+
+	// Resolvers, if non-empty, overrides which DNS servers this check
+	// uses to resolve its target's hostname — bypassing the host's
+	// stub resolver and any stale local cache. Each entry is a
+	// "host:port" (a bare host gets ":53" appended at use time).
+	// The list is tried in order with connection-level failover, so
+	// `["1.1.1.1", "1.0.0.1"]` falls through to Cloudflare's secondary
+	// when the primary is unreachable.
+	//
+	// Empty (the default) means: use the cluster-wide default in
+	// ClusterConfig.Resolvers; if that is also empty, the host's
+	// system resolver is used. For DNS-type checks, DNSResolver is
+	// honored as a legacy single-entry fallback when both Resolvers
+	// and the cluster default are empty.
+	Resolvers []string `yaml:"resolvers,omitempty"`
 }
 
 // AlertType enumerates supported notifier kinds.
@@ -205,6 +220,13 @@ type ClusterConfig struct {
 	Alerts             []Alert             `yaml:"alerts"`
 	PendingEnrollments []PendingEnrollment `yaml:"pending_enrollments,omitempty"`
 
+	// Resolvers is the cluster-wide default DNS-server list used when a
+	// check has no Resolvers of its own. Same format as Check.Resolvers:
+	// an ordered "host[:port]" list tried with connection-level
+	// failover. Empty means every check that doesn't carry its own list
+	// uses the host's system resolver.
+	Resolvers []string `yaml:"resolvers,omitempty"`
+
 	mu       sync.RWMutex `yaml:"-"`
 	onChange []func()     // fired after any successful Mutate/Replace
 	lastSum  [32]byte     // sha256 of the bytes most recently written
@@ -296,6 +318,7 @@ func (c *ClusterConfig) Snapshot() *ClusterConfig {
 		Checks:             append([]Check(nil), c.Checks...),
 		Alerts:             append([]Alert(nil), c.Alerts...),
 		PendingEnrollments: copyEnrollments(c.PendingEnrollments),
+		Resolvers:          append([]string(nil), c.Resolvers...),
 	}
 	return cp
 }
@@ -362,6 +385,7 @@ func (c *ClusterConfig) Replace(incoming *ClusterConfig) (bool, error) {
 	c.Checks = append([]Check(nil), incoming.Checks...)
 	c.Alerts = append([]Alert(nil), incoming.Alerts...)
 	c.PendingEnrollments = copyEnrollments(incoming.PendingEnrollments)
+	c.Resolvers = append([]string(nil), incoming.Resolvers...)
 	out, err := yaml.Marshal(c)
 	if err != nil {
 		c.mu.Unlock()

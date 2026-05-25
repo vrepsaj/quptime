@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"git.cer.sh/axodouble/quptime/internal/config"
@@ -283,6 +284,7 @@ func (r *Replicator) applyLocally(kind transport.MutationKind, payload json.RawM
 			c.Peers = append([]config.PeerInfo(nil), incoming.Peers...)
 			c.Checks = append([]config.Check(nil), incoming.Checks...)
 			c.Alerts = append([]config.Alert(nil), incoming.Alerts...)
+			c.Resolvers = append([]string(nil), incoming.Resolvers...)
 			return nil
 
 		case transport.MutationRemovePeer:
@@ -349,6 +351,26 @@ func (r *Replicator) applyLocally(kind transport.MutationKind, payload json.RawM
 				}
 			}
 			return fmt.Errorf("no such enrollment %q", body.ID)
+
+		case transport.MutationSetResolvers:
+			var list []string
+			if err := json.Unmarshal(payload, &list); err != nil {
+				return fmt.Errorf("decode resolvers: %w", err)
+			}
+			// Trim and drop blanks, but accept an empty list (clears the
+			// default).
+			cleaned := make([]string, 0, len(list))
+			for _, s := range list {
+				if s = strings.TrimSpace(s); s != "" {
+					cleaned = append(cleaned, s)
+				}
+			}
+			if len(cleaned) == 0 {
+				c.Resolvers = nil
+			} else {
+				c.Resolvers = cleaned
+			}
+			return nil
 
 		case transport.MutationApproveEnrollment:
 			// Payload: enrollment id-or-name. Looks up the entry, requires

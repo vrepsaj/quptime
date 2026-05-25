@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -18,11 +19,15 @@ const maxBodyRead = 1 << 20 // 1 MiB
 type httpProber struct{}
 
 func (httpProber) Probe(ctx context.Context, c *config.Check) Result {
-	client := &http.Client{
-		Timeout: c.Timeout,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+		DialContext: func(dctx context.Context, network, addr string) (net.Conn, error) {
+			return dialWithResolver(dctx, c, network, addr)
 		},
+	}
+	client := &http.Client{
+		Timeout:   c.Timeout,
+		Transport: transport,
 	}
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Target, nil)

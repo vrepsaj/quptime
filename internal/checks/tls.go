@@ -31,25 +31,22 @@ func (tlsProber) Probe(ctx context.Context, c *config.Check) Result {
 	}
 
 	start := time.Now()
-	d := tls.Dialer{
-		NetDialer: &net.Dialer{Timeout: c.Timeout},
-		Config: &tls.Config{
-			MinVersion:         tls.VersionTLS12,
-			ServerName:         sni,
-			InsecureSkipVerify: true, // expiry-focused; chain validity is out of scope here
-		},
-	}
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	rawConn, err := dialWithResolver(ctx, c, "tcp", addr)
 	if err != nil {
 		return Result{OK: false, Detail: err.Error(), Latency: time.Since(start)}
 	}
-	defer conn.Close()
+	tc := tls.Client(rawConn, &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         sni,
+		InsecureSkipVerify: true, // expiry-focused; chain validity is out of scope here
+	})
+	if err := tc.HandshakeContext(ctx); err != nil {
+		_ = rawConn.Close()
+		return Result{OK: false, Detail: err.Error(), Latency: time.Since(start)}
+	}
+	defer tc.Close()
 	latency := time.Since(start)
 
-	tc, ok := conn.(*tls.Conn)
-	if !ok {
-		return Result{OK: false, Detail: "not a TLS connection", Latency: latency}
-	}
 	state := tc.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
 		return Result{OK: false, Detail: "peer presented no certificate", Latency: latency}
