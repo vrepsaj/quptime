@@ -10,6 +10,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - New documented deployment methods for Tailscale and EdgeVPN, with example `docker-compose.yml` files and wrapper scripts in `docker/tailscale/` and `docker/edgevpn/`.
 - New builder command `qu builder`, which generates a standalone HTML alert-template builder
+- **Custom DNS resolvers for check target resolution.** Every probe
+  (HTTP / TCP / TLS / ICMP / DNS) can now bypass the host's stub
+  resolver and the local cache by pointing at explicit DNS servers.
+  Two new fields, both `omitempty`:
+  - `cluster.yaml.resolvers` — cluster-wide default list, edited via
+    `qu cluster resolvers set <r1> [<r2> …]` / `clear` / `show`.
+  - `checks[].resolvers` — per-check override, set via the new
+    `--resolvers` flag on `qu check add <type>` and `qu check edit`.
+
+  Lookup precedence on each probe: per-check → cluster default →
+  (DNS checks only) legacy `dns_resolver` → host system resolver.
+  Each entry is `host[:port]` — a bare host gets `:53` appended at
+  use time. Lists are tried in order with **connection-level
+  failover**, so `[1.1.1.1, 1.0.0.1]` rolls over to Cloudflare's
+  secondary when the primary is unreachable. Literal IP targets
+  skip the resolver entirely. ICMP only consults the resolver list
+  when an override is configured; existing ICMP checks with no
+  override behave unchanged.
 - **Pause checks and alerts without deleting them.** Both `Check` and
   `Alert` carry a new `disabled` (yaml `disabled,omitempty`) field.
   Disabled checks are skipped by the scheduler — their workers are

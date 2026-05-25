@@ -70,6 +70,12 @@ func (s *Scheduler) reconcile(ctx context.Context) {
 		if c.ID == "" || c.Disabled {
 			continue
 		}
+		// Bake the effective resolver list into the Check copy that
+		// runs in the worker. Probers read c.Resolvers directly and
+		// need it to already reflect cluster defaults and the legacy
+		// DNSResolver fallback. The original cluster.yaml entry is
+		// not mutated — this only edits the local copy in `want`.
+		c.Resolvers = EffectiveResolvers(&c, snap.Resolvers)
 		want[c.ID] = c
 	}
 
@@ -143,5 +149,18 @@ func sameCheck(a, b config.Check) bool {
 		a.Interval == b.Interval &&
 		a.Timeout == b.Timeout &&
 		a.ExpectStatus == b.ExpectStatus &&
-		a.BodyMatch == b.BodyMatch
+		a.BodyMatch == b.BodyMatch &&
+		sameStrings(a.Resolvers, b.Resolvers)
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

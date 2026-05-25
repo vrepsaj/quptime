@@ -232,6 +232,12 @@ const (
 	MutationRemoveEnrollment    MutationKind = "remove_enrollment"
 	MutationRecordEnrollPending MutationKind = "record_enroll_pending"
 	MutationApproveEnrollment   MutationKind = "approve_enrollment"
+
+	// MutationSetResolvers overwrites the cluster-wide default DNS
+	// resolver list. Payload is a JSON []string. An empty list clears
+	// the default so every check falls back to its own override or to
+	// the host's system resolver.
+	MutationSetResolvers MutationKind = "set_resolvers"
 )
 
 // ProposeMutationRequest is a follower-to-master message. The payload

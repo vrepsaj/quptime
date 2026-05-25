@@ -149,6 +149,9 @@ they receive a higher-versioned snapshot.
 version: 12
 updated_at: 2026-05-15T14:01:00Z
 updated_by: 7f3a5b9e-...
+resolvers:                          # cluster-wide default DNS servers
+  - 1.1.1.1                         # tried in order with failover
+  - 1.0.0.1                         # omit / empty list to use each host's resolver
 peers:
   - node_id: 7f3a5b9e-...
     advertise: alpha.example.com:9901
@@ -187,6 +190,7 @@ alerts:
 | `peers`      | editable | Cluster members. Edits go through `add_peer` / `remove_peer` mutations.            |
 | `checks`     | editable | Monitored targets.                                                                 |
 | `alerts`     | editable | Notifier destinations.                                                             |
+| `resolvers`  | editable | Cluster-wide default DNS-server list; used by checks with no `resolvers` of their own. Edit via `qu cluster resolvers set/clear`. |
 
 ### `peers[]`
 
@@ -224,6 +228,9 @@ and adds it to the local trust store. See
   alert_ids: [oncall]     # alerts attached explicitly
   suppress_alert_ids: []  # opt out of specific default alerts
   disabled: false         # when true, the scheduler skips probing this check
+  resolvers:              # optional per-check DNS-server list (host[:port])
+    - 1.1.1.1             # tried in order with connection-level failover
+    - 1.0.0.1             # empty = use the cluster default, then host resolver
 ```
 
 Defaults:
@@ -240,10 +247,55 @@ Defaults:
   results age out of the aggregator without triggering a transition.
   Toggle from the CLI with `qu check enable|disable <id-or-name>` or
   from the TUI with `x` on the Checks tab.
+- `resolvers`: `[]` (omitted from `cluster.yaml` when empty). When
+  non-empty, the listed DNS servers are used to resolve the check's
+  target instead of the host's stub resolver. Applies to HTTP / TCP /
+  TLS / ICMP target lookups and to the DNS check's query itself. Each
+  entry is a `host[:port]`; bare hosts get `:53` appended at use
+  time. The list is walked in order with connection-level failover —
+  `[1.1.1.1, 1.0.0.1]` falls through to Cloudflare's secondary if the
+  primary is unreachable. Resolution of literal IP targets short-
+  circuits and skips the resolver entirely. Empty means: use the
+  cluster-wide default in `cluster.yaml.resolvers`; if that is also
+  empty, the host's system resolver is used. For DNS checks,
+  `dns_resolver` is honored as a legacy single-entry fallback when
+  both lists are empty. Toggle from the CLI with `qu check edit
+  --resolvers …` or set the cluster-wide default with `qu cluster
+  resolvers set …`.
 
 ICMP checks default to **unprivileged UDP-mode pings** so the daemon
 does not need root. For raw ICMP, grant the capability — see
 [deployment/systemd.md](deployment/systemd.md).
+
+### DNS resolver precedence
+
+Every probe (HTTP / TCP / TLS / ICMP / DNS) needs to translate its
+target hostname into an IP at some point. The list it uses is picked
+on each probe in this order:
+
+1. `check.resolvers` — the per-check override.
+2. `cluster.resolvers` — the cluster-wide default in `cluster.yaml`.
+3. For **DNS-type checks only**, the legacy `check.dns_resolver`
+   single-value field is honoured if it's set and both lists above
+   are empty (kept for back-compat with configs written before
+   `resolvers` existed).
+4. The host's system resolver (`net.DefaultResolver` — `nscd`,
+   `systemd-resolved`, `/etc/resolv.conf`, depending on platform).
+
+Within a non-empty list, entries are tried in order with **connection-
+level failover**: when the resolver dials, it walks the list and uses
+the first server that accepts a connection. Subsequent queries reuse
+the resolver, so query-level retries (e.g. `SERVFAIL`) do not roll
+over to the next server in the list — only connectivity failures do.
+This handles the realistic failure mode ("primary resolver is down")
+without adding application-level retry on every lookup.
+
+Literal IP targets (`10.0.0.1`, `https://192.0.2.1/`, etc.) skip the
+resolver entirely — there is nothing to look up. ICMP only consults
+the resolver list when there is at least one override configured; if
+both check and cluster lists are empty, the underlying ping library
+does its own lookup against the system resolver as before, so
+existing ICMP checks behave unchanged.
 
 TLS checks dial the target over TLS and inspect the leaf certificate's
 `NotAfter`. Chain validity is intentionally **not** verified (self-signed
