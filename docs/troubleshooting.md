@@ -102,6 +102,40 @@ Walk this list in order; one of them will catch it:
    target may never satisfy the hysteresis. Lower the check interval
    or increase reliability of the target.
 
+## A check is hitting the wrong IP (stale local DNS)
+
+**Symptoms.** Your HTTP / TCP / TLS check is flapping or stays
+`down`, but a fresh `dig` from another machine resolves the hostname
+to a different (working) IP. The daemon is using a cached or stale
+record from the host's stub resolver.
+
+**Diagnose.**
+
+```sh
+# what `qu` resolves vs. what an authoritative resolver returns:
+getent hosts example.com          # = what the daemon sees via systemd-resolved/nscd
+dig +short @1.1.1.1 example.com   # = what's actually in DNS right now
+```
+
+If they disagree, the local cache is the culprit.
+
+**Fix.** Point that check (or the whole cluster) at the resolvers you
+trust:
+
+```sh
+# Whole cluster: every check that doesn't override uses these.
+sudo -u quptime qu cluster resolvers set 1.1.1.1 1.0.0.1
+
+# Just one check:
+sudo -u quptime qu check edit homepage --resolvers 1.1.1.1,1.0.0.1
+```
+
+The list is tried in order with connection-level failover. Literal
+IP targets skip the resolver entirely, so a check whose target is
+already an IP isn't subject to caching. See
+[configuration.md → DNS resolver precedence](configuration.md#dns-resolver-precedence)
+for the full lookup order.
+
 ## Discord webhook returns 4xx
 
 The dispatcher logs the HTTP body. Common causes:

@@ -26,6 +26,7 @@ trust — no central CA, no shared secret.
   - [Adding checks and alerts](#adding-checks-and-alerts)
   - [Default alerts (attach to every check)](#default-alerts-attach-to-every-check)
   - [Pause checks and alerts without deleting them](#pause-checks-and-alerts-without-deleting-them)
+  - [Bypass the host's DNS cache (custom resolvers)](#bypass-the-hosts-dns-cache-custom-resolvers)
   - [Interactive TUI](#interactive-tui)
   - [Custom alert messages](#custom-alert-messages)
     - [Conditionals, pipelines, and worked examples](#conditionals-pipelines-and-worked-examples)
@@ -321,6 +322,35 @@ Toggling is a regular cluster mutation: it routes through the master
 and replicates like any other edit. In the TUI, `x` on the Checks or
 Alerts tab toggles the selected row.
 
+## Bypass the host's DNS cache (custom resolvers)
+
+By default each probe resolves its target through the host's system
+resolver — which means an `nscd` / `systemd-resolved` cache, or a
+sleepy local DNS server, can keep a check pointed at an IP that has
+since moved. To bypass that path, point `qu` at the resolvers you
+trust:
+
+```sh
+# Cluster-wide default: every check that doesn't override uses these.
+# Tried in order with connection-level failover.
+qu cluster resolvers set 1.1.1.1 1.0.0.1
+qu cluster resolvers show
+qu cluster resolvers clear
+
+# Per-check override (always wins over the cluster default):
+qu check add http homepage https://example.com --resolvers 1.1.1.1,1.0.0.1
+qu check edit homepage --resolvers 8.8.8.8,8.8.4.4
+qu check edit homepage --resolvers ''   # clear; fall back to cluster default
+```
+
+The resolver list applies to HTTP / TCP / TLS / ICMP target lookups
+and (for DNS checks) to the query itself. Each entry is a
+`host[:port]`; a bare host gets `:53` appended at use time. Literal
+IP targets skip the resolver entirely — there's nothing to look up.
+
+Precedence on every probe is **check → cluster → legacy DNSResolver
+(DNS checks only) → host system resolver**.
+
 ## Interactive TUI
 
 Prefer a dashboard over typing commands? `qu tui` opens a full-screen
@@ -586,11 +616,11 @@ qu enroll revoke  <id-or-name>                revoke an outstanding token
 qu enroll join    <token> [--advertise …]     redeem a token on a new host
 qu node list                                  show peers + liveness
 qu node remove <node-id>                      remove from cluster + trust
-qu check add http  <name> <url>  [--expect 200] [--interval 30s] [--body-match str] [--alerts a,b]
-qu check add tcp   <name> <host:port>
-qu check add icmp  <name> <host>
-qu check add tls   <name> <host[:port]>          [--warn-days 14] [--sni name]
-qu check add dns   <name> <hostname>             [--record a|aaaa|cname|mx|txt|ns] [--resolver host:port] [--expect substr]
+qu check add http  <name> <url>  [--expect 200] [--interval 30s] [--body-match str] [--alerts a,b] [--resolvers 1.1.1.1,1.0.0.1]
+qu check add tcp   <name> <host:port>                                                                  [--resolvers 1.1.1.1,1.0.0.1]
+qu check add icmp  <name> <host>                                                                       [--resolvers 1.1.1.1,1.0.0.1]
+qu check add tls   <name> <host[:port]>          [--warn-days 14] [--sni name]                         [--resolvers 1.1.1.1,1.0.0.1]
+qu check add dns   <name> <hostname>             [--record a|aaaa|cname|mx|txt|ns] [--resolver host:port] [--expect substr] [--resolvers …]
 qu check list
 qu check remove  <id-or-name>
 qu check enable  <id-or-name>                   resume probing a previously disabled check
@@ -602,6 +632,9 @@ qu alert list / remove / test <id-or-name>
 qu alert enable  <id-or-name>                   resume firing a previously disabled alert
 qu alert disable <id-or-name>                   silence an alert without deleting it
 qu alert default <id-or-name> on|off            toggle default attachment to every check
+qu cluster resolvers show                       print the cluster-wide default DNS resolver list
+qu cluster resolvers set  <r1> [<r2> …]         replace the cluster-wide resolver list (failover order)
+qu cluster resolvers clear                      drop the cluster-wide list; every check falls back to host resolver
 qu trust list / remove <node-id>
 qu update [--check] [--force] [--source gitea|github] [--beta]   replace this binary with the latest release
 ```
