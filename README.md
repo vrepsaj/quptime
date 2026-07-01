@@ -1,5 +1,10 @@
 # qu — quorum-based uptime monitor
 
+⚠️ **This project is in early development.** 
+> This project is a passion project of mine.
+> Changes and updates may be frequent or infrequent. 
+> I will try my best to help you if you encounter issues.
+
 `qu` is a small Linux daemon that watches HTTP, TCP, and ICMP endpoints
 from several cooperating nodes. The nodes form a quorum cluster; one is
 elected master and owns alert dispatch. A check is only reported as
